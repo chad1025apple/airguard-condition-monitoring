@@ -17,6 +17,7 @@ import {
 } from './domain'
 import { exportRow, makeDemoData, recentAlerts, simulateMeasurement, type DemoScenario, type PresentationScenario } from './demoData'
 import { PdmTrend } from './PdmTrend'
+import { makePdmDemo } from './pdm'
 
 const navItems: { id: View; label: string; icon: typeof Gauge }[] = [
   { id: 'overview', label: 'Overview', icon: Gauge },
@@ -31,6 +32,7 @@ const navItems: { id: View; label: string; icon: typeof Gauge }[] = [
 ]
 
 const settingsKey = 'airguard-presentation-settings'
+type DashboardScenario = DemoScenario | 'degradation'
 const presentationCases: { id: PresentationScenario; label: string; slide: number }[] = [
   { id: 'normal', label: 'Normal', slide: 19 },
   { id: 'warning', label: 'Warning', slide: 20 },
@@ -104,7 +106,7 @@ function App() {
   const [navOpen, setNavOpen] = useState(false)
   const [range, setRange] = useState('24H')
   const [notice, setNotice] = useState('')
-  const [activeCase, setActiveCase] = useState<DemoScenario | null>('normal')
+  const [activeCase, setActiveCase] = useState<DashboardScenario | null>('normal')
 
   const latest = measurements.at(-1)!
   const assessment = assessMeasurement(latest, settings)
@@ -121,13 +123,16 @@ function App() {
     setNotice(message)
     window.setTimeout(() => setNotice(''), 3500)
   }
-  const loadDemo = (scenario: DemoScenario = 'normal') => {
-    const data = makeDemoData(settings.machineId, scenario)
+  const loadDemo = (scenario: DashboardScenario = 'normal') => {
+    const data = scenario === 'degradation'
+      ? makePdmDemo(settings, settings.machineId)
+      : makeDemoData(settings.machineId, scenario)
     setMeasurements(data)
     setAlerts(recentAlerts(data, settings))
     setActiveCase(scenario)
     const example = presentationCases.find(({ id }) => id === scenario)
-    showNotice(example ? `Slide ${example.slide} · ${example.label} demo loaded.` : 'P3 electrical unbalance demo loaded.')
+    showNotice(example ? `Slide ${example.slide} · ${example.label} demo loaded.`
+      : scenario === 'degradation' ? 'Degradation demo loaded across the dashboard.' : 'P3 electrical unbalance demo loaded.')
   }
   const simulate = (anomaly = false) => {
     if (!latest.vdiExample) return
@@ -170,7 +175,7 @@ function App() {
   </div>
 }
 
-function Overview({ data, latest, settings, range, setRange, goTo, assessment, activeCase, onLoadCase, onSimulate }: { data: Measurement[]; latest: Measurement; settings: Settings; range: string; setRange: (r: string) => void; goTo: (view: View) => void; assessment: ReturnType<typeof assessMeasurement>; activeCase: DemoScenario | null; onLoadCase: (scenario: DemoScenario) => void; onSimulate: (anomaly?: boolean) => void }) {
+function Overview({ data, latest, settings, range, setRange, goTo, assessment, activeCase, onLoadCase, onSimulate }: { data: Measurement[]; latest: Measurement; settings: Settings; range: string; setRange: (r: string) => void; goTo: (view: View) => void; assessment: ReturnType<typeof assessMeasurement>; activeCase: DashboardScenario | null; onLoadCase: (scenario: DashboardScenario) => void; onSimulate: (anomaly?: boolean) => void }) {
   const { status: currentStatus, findings } = assessment
   const voltageUnbalance = vuf(latest)
   const phaseCurrentUnbalance = currentUnbalance(latest)
@@ -215,7 +220,7 @@ function Overview({ data, latest, settings, range, setRange, goTo, assessment, a
       <MetricCard label="Isolation Forest score" value={latest.vdiExample ? latest.anomalyScore.toFixed(2) : 'Unavailable'} detail={latest.vdiExample ? `Demo threshold ${settings.anomalyThreshold} · ${demoAnomaly ? 'ANOMALY' : 'NORMAL'}` : 'No model run on imported data'} tone={demoAnomaly ? 'amber' : 'purple'} icon={<BrainCircuit size={18} />} />
       <MetricCard label="Data quality" value={latest.sensorStatus === 'Online' ? 'ONLINE' : 'OFFLINE'} detail={`${latest.point} sensor status`} tone="green" icon={<ClipboardCheck size={18} />} />
     </div>
-    <PdmTrend data={data} latest={latest} settings={settings} />
+    <PdmTrend data={data} latest={latest} settings={settings} degradationDemo={activeCase === 'degradation'} onLoadDemo={() => onLoadCase('degradation')} />
     <div className="section-title charts-title"><div><span>TREND ANALYSIS</span><h2>Condition trend</h2></div><RangeControl range={range} setRange={setRange} /></div>
     <div className="chart-grid two">
       <ChartPanel title="Vibration velocity trend" subtitle="Band A / Band B · mm/s RMS"><ResponsiveContainer width="100%" height={250}><LineChart data={trend}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} tickLine={false} /><YAxis {...axis} tickLine={false} /><Tooltip contentStyle={tooltipStyle} /><Legend /><Line type="monotone" dataKey="bandA" name="Band A" stroke="#28c9a3" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="bandB" name="Band B" stroke="#f3b450" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></ChartPanel>

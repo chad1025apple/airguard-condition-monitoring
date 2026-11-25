@@ -7,7 +7,7 @@ Condition monitoring and predictive maintenance prototype for the **airend of an
 - Industrial SCADA-style dashboard with responsive navigation
 - Vibration, electrical and bearing-housing temperature monitoring
 - VDI 3836 vibration zone comparison and point-specific example ALARM calculation
-- Overview PdM trends for Band A/B vibration and bearing housing temperature, with short-term time-to-threshold estimates
+- Overview PdM trends for Band A/B vibration, bearing housing temperature and P3 electrical unbalance, with short-term time-to-threshold estimates
 - Isolation Forest **demo-mode** anomaly score visualisation
 - Engineering evidence and suggested inspections for fault diagnosis
 - Repeatable Normal, Warning and Critical examples, alert history, local settings and CSV validation
@@ -33,9 +33,11 @@ The presentation CSV has **12 metadata columns and 14 feature columns**. The win
 
 The built-in example uses simulated measurements and mock Isolation Forest scores. Real sensor integration, validated fault diagnosis, remaining life estimation and switch-off protection are outside the prototype scope.
 
-In Overview, select **Show degradation demo** to see measured history, threshold lines, and a projected crossing. The projection fits a line to recent comparable readings from one measurement point and direction. Its horizon is limited to the observed fit duration (maximum seven days). The shaded planning range shows how the forecast changes with variation in the recent fit. It has no calibrated probability.
+In Overview, the PdM graph uses the same timestamped readings as the dashboard. Select **Load degradation demo** to load a simulated history throughout the dashboard. Select **F01** for an example Warning projection, **F02** for a Critical projection after Warning, or **F14** to see both projected dates on one graph. P3 indicators use their existing project Warning limits. Imported CSVs can show trends, with threshold estimates unavailable until the machine and limits are verified.
 
-**Suggested inspection** subtracts the selected lead time (8, 24, or 48 hours) from the earliest estimated Warning. Once Warning is reached or falls within that lead time, the prototype suggests review now. The timing supports an inspection decision. Failure prediction, scheduling and work orders require separate validation and approval.
+The projection fits a line to recent readings at comparable load and speed, with separate series by point and direction for vibration and temperature. It requires at least six readings spanning an hour and a consistent rise. Its horizon is limited to the observed fit duration (maximum seven days). Dots mark the estimated threshold crossings and the shaded band shows how the estimate changes with variation in the recent fit.
+
+**Suggested inspection** subtracts the selected lead time (8, 24, or 48 hours) from the earliest estimated Warning. Once Warning is reached or falls within that lead time, the prototype suggests review now. The dates estimate threshold crossings for inspection planning.
 
 In Overview, select **Electrical unbalance · P3** to see a warning from the motor terminal box readings. The demo reaches approximately **3.00% VUF** and **8.06% current unbalance** against project settings of **2%** and **5%**. Electrical Monitoring shows the phase readings and both trends. Fault Diagnosis Support shows the two triggers and suggests comparing readings at P3 and upstream.
 

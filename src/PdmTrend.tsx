@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceArea, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { demoThermalLimits, vdiDemoLimits, type Measurement, type Settings } from './domain'
-import { hourMs, inspectionPlan, makePdmDemo, pdmHistory, projectTrend, thresholdOutlook, type PdmMetric } from './pdm'
+import { hourMs, inspectionPlan, isElectricalMetric, pdmHistory, projectTrend, thresholdOutlook, type PdmMetric } from './pdm'
 
 const metrics = {
   bandA: { label: 'F01 · Band A velocity RMS', unit: 'mm/s' },
   bandB: { label: 'F02 · Band B velocity RMS', unit: 'mm/s' },
+  currentUnbalance: { label: 'F12 · Current unbalance', unit: '%' },
+  vuf: { label: 'F13 · Voltage unbalance (VUF)', unit: '%' },
   temperature: { label: 'F14 · Bearing housing temperature', unit: '°C' },
 } as const
 
@@ -27,6 +29,8 @@ interface PdmTrendProps {
   data: Measurement[]
   latest: Measurement
   settings: Settings
+  degradationDemo: boolean
+  onLoadDemo: () => void
 }
 
 interface TrendRow {
@@ -43,43 +47,44 @@ function crossingWindow(estimate: NonNullable<ReturnType<typeof thresholdOutlook
   return start === end ? `Estimated around ${start}` : `Planning range · ${start} to ${end}`
 }
 
-export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
+export function PdmTrend({ data, latest, settings, degradationDemo, onLoadDemo }: PdmTrendProps) {
   const [metric, setMetric] = useState<PdmMetric>('bandA')
   const [selectedPoint, setSelectedPoint] = useState<Measurement['point']>()
-  const [showDemo, setShowDemo] = useState(false)
   const [leadHours, setLeadHours] = useState(24)
-  const machineId = showDemo ? settings.machineId : latest.machineId
+  const { machineId } = latest
   const point = selectedPoint ?? latest.point
-  const example = useMemo(() => showDemo ? makePdmDemo(settings, machineId) : null, [showDemo, settings, machineId])
-  const { history, direction } = pdmHistory(example ?? data, machineId, point, metric)
-  const currentTime = history.at(-1)?.[0]
-  const current = history.at(-1)?.[1]
-  const value = current?.sensorStatus === 'Online' ? current[metric] : null
+  const { history, direction } = pdmHistory(data, machineId, point, metric)
+  const lastReading = history.at(-1)
+  const currentTime = lastReading?.time
+  const current = lastReading?.row
+  const value = lastReading?.value ?? null
   const { unit } = metrics[metric]
   const isThermal = metric === 'temperature'
-  const vdi = isThermal ? null : vdiDemoLimits(current, metric, settings)
+  const isElectrical = isElectricalMetric(metric)
+  const vdi = metric === 'bandA' || metric === 'bandB' ? vdiDemoLimits(current, metric, settings) : null
   const thermal = isThermal ? demoThermalLimits(current, settings) : null
-  const warning = (isThermal ? thermal?.warning : vdi?.alarm) ?? null
-  const critical = (isThermal ? thermal?.critical : vdi?.zone2) ?? null
+  const electricalLimit = metric === 'vuf' ? settings.vufWarning : settings.currentUnbalanceWarning
+  const electricalWarning = isElectrical && current?.vdiExample && Number.isFinite(electricalLimit) && electricalLimit > 0 ? electricalLimit : null
+  const warning = vdi?.alarm ?? thermal?.warning ?? electricalWarning
+  const critical = vdi?.zone2 ?? thermal?.critical ?? null
+  const isDemoLimit = isThermal || isElectrical
   const limits = [
-    { label: isThermal ? 'Warning (demo)' : 'Warning · VDI ALARM', short: 'Warning', value: warning, color: colors.warning, className: 'pdm-warning' },
-    { label: isThermal ? 'Critical (demo)' : 'Critical review · Zone II/III', short: 'Critical review', value: critical, color: colors.critical, className: 'pdm-critical' },
+    { label: isDemoLimit ? 'Warning (demo)' : 'Warning · VDI ALARM', short: 'Warning', value: warning, color: colors.warning, className: 'pdm-warning' },
+    { label: isThermal ? 'Critical (demo)' : isElectrical ? 'Critical' : 'Critical review · Zone II/III', short: isDemoLimit ? 'Critical' : 'Critical review', value: critical, color: colors.critical, className: 'pdm-critical' },
   ]
-  const trend = projectTrend(history, metric)
-  const outlook = critical !== null && value !== null && value < critical && 'slope' in trend ? trend : null
-  const crossings = limits.map((limit) => ({
-    ...limit,
-    reached: limit.value !== null && value !== null && value >= limit.value,
-    estimate: outlook && value !== null && limit.value !== null ? thresholdOutlook(outlook, value, limit.value) : null,
-  }))
+  const trend = projectTrend(history)
+  const atCritical = critical !== null && value !== null && value >= critical
+  const outlook = !atCritical && 'slope' in trend ? trend : null
+  const crossings = limits.map((limit) => {
+    const estimate = outlook && value !== null && limit.value !== null ? thresholdOutlook(outlook, value, limit.value) : null
+    const at = currentTime !== undefined && estimate?.estimated != null ? currentTime + estimate.estimated * hourMs : null
+    return { ...limit, reached: limit.value !== null && value !== null && value >= limit.value, estimate, at }
+  })
   const plan = inspectionPlan(warning, critical, value, crossings[0].estimate, leadHours)
   const inspectBy = currentTime !== undefined && plan?.state === 'planned' ? currentTime + plan.hours * hourMs : null
-  const warningAt = currentTime !== undefined && crossings[0].estimate?.estimated != null
-    ? currentTime + crossings[0].estimate.estimated * hourMs
-    : null
-  const chartData: TrendRow[] = history.map(([time, row]) => ({
+  const chartData: TrendRow[] = history.map(({ time, value: reading }) => ({
     time,
-    reading: row.sensorStatus === 'Online' ? row[metric] : null,
+    reading,
     forecast: null,
     range: null,
   }))
@@ -87,11 +92,12 @@ export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
   if (outlook && value !== null && currentTime !== undefined) {
     const projectionSamples = Array.from({ length: 25 }, (_, index) => {
       const h = outlook.horizonHours * index / 24
+      const lower = value + h * outlook.slowerSlope - outlook.spread
       return {
         time: currentTime + h * hourMs,
         reading: index === 0 ? value : null,
         forecast: value + h * outlook.slope,
-        range: [Math.max(0, value + h * outlook.slowerSlope - outlook.spread), value + h * outlook.fasterSlope + outlook.spread] as [number, number],
+        range: [isThermal ? lower : Math.max(0, lower), value + h * outlook.fasterSlope + outlook.spread] as [number, number],
       }
     })
     chartData.splice(chartData.length - 1, 1, ...projectionSamples)
@@ -101,24 +107,20 @@ export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
   const lastTime = chartData.at(-1)?.time ?? firstTime
   const xDomain = firstTime === lastTime ? [firstTime - hourMs / 2, lastTime + hourMs / 2] : [firstTime, lastTime]
   const longView = lastTime - firstTime > 72 * hourMs
-  const subtitle = showDemo ? 'Simulated degradation example' : current?.simulated ? 'Dashboard demo data' : current ? 'Imported CSV' : 'Dashboard data'
-  const status = critical === null
-    ? 'Thresholds need a verified configuration for these readings.'
-    : outlook
-      ? `The recent trend is projected up to ${duration(outlook.horizonHours)}. The shaded range reflects how much the recent fit varies.`
-      : value !== null && value >= critical
-        ? 'The latest reading reached the critical review level.'
-        : 'reason' in trend ? trend.reason : null
+  const subtitle = degradationDemo ? 'Dashboard degradation demo' : latest.simulated ? 'Dashboard demo data' : 'Imported CSV'
+  const location = isElectrical ? latest.simulated ? 'P3 · Motor terminal box' : 'Electrical features' : `${point}${current ? ` · ${direction}` : ''}`
+  const status = outlook
+    ? `The recent trend is projected up to ${duration(outlook.horizonHours)}. The shaded range reflects how much the recent fit varies.`
+    : atCritical ? 'The latest reading reached the critical review level.'
+      : 'reason' in trend ? trend.reason : null
 
   return <section className="panel pdm-panel" aria-labelledby="pdm-heading">
     <div className="pdm-header">
       <div>
         <h2 id="pdm-heading">Predictive maintenance trend</h2>
-        <p>Airend · {machineId} · {point}{current && ` · ${direction}`} · {subtitle}</p>
+        <p>{machineId} · {location} · {subtitle}</p>
       </div>
-      <button type="button" className="outline-button" onClick={() => setShowDemo((active) => !active)}>
-        {showDemo ? 'Use dashboard data' : 'Show degradation demo'}
-      </button>
+      {latest.vdiExample && <button type="button" className="outline-button" onClick={onLoadDemo} disabled={degradationDemo}>Load degradation demo</button>}
     </div>
     <div className="pdm-controls">
       <label>Indicator
@@ -126,12 +128,12 @@ export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
           {Object.entries(metrics).map(([key, { label }]) => <option key={key} value={key}>{label}</option>)}
         </select>
       </label>
-      <label>Point
+      {!isElectrical && <label>Point
         <select value={point} onChange={(event) => setSelectedPoint(event.target.value as Measurement['point'])}>
           <option value="P1">P1 · DE (drive end)</option>
           <option value="P2">P2 · NDE (non-drive end)</option>
         </select>
-      </label>
+      </label>}
       <label>Inspection lead time
         <select value={leadHours} onChange={(event) => setLeadHours(Number(event.target.value))}>
           <option value={8}>8 hours</option>
@@ -146,15 +148,15 @@ export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
         <strong>{value === null ? 'Unavailable' : `${number.format(value)} ${unit}`}</strong>
         {currentTime !== undefined && <small>{dateTime.format(currentTime)} ICT</small>}
       </div>
-      {crossings.map(({ label, value: limit, color, reached, estimate }) => <div key={label}>
+      {crossings.map(({ label, value: limit, color, reached, estimate, at }) => <div key={label}>
         <span style={{ color }}>{label}{limit !== null && ` · ${number.format(limit)} ${unit}`}</span>
         <strong>{limit === null ? 'Not configured'
           : value === null ? 'Reading unavailable'
           : reached ? 'Threshold reached'
-          : estimate?.estimated != null && currentTime !== undefined ? `~ ${dateTime.format(currentTime + estimate.estimated * hourMs)}`
+          : at !== null ? `Estimated ${dateTime.format(at)}`
           : estimate ? 'Possible crossing' : 'Below threshold'}</strong>
         {estimate && currentTime !== undefined && <small>{crossingWindow(estimate, currentTime)}</small>}
-        {limit !== null && value !== null && !reached && !estimate && <small>{outlook ? 'Beyond the projection window' : 'No time estimate'}</small>}
+        {limit !== null && value !== null && !reached && !estimate && <small>{outlook ? `No crossing within ${duration(outlook.horizonHours)}` : 'No time estimate'}</small>}
       </div>)}
     </div>
     <div className="pdm-plan" data-state={plan?.state ?? 'unavailable'} aria-live="polite">
@@ -168,14 +170,15 @@ export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
         : plan?.state === 'urgent' ? 'The critical review level is already reached. Verify the reading and follow the site procedure.'
         : plan?.state === 'warning' ? 'Warning is already reached. Verify the reading and coordinate an inspection.'
         : plan?.state === 'soon' ? `The earliest Warning falls within the selected ${duration(leadHours)} lead time. Review the trend with maintenance.`
-        : 'The estimate appears when there is a configured Warning and a rising trend that may reach it within the forecast window.'}</p>
+        : warning === null ? 'A verified Warning threshold is needed to suggest an inspection date.'
+          : 'An inspection date appears when the rising trend may reach Warning within the projection.'}</p>
     </div>
     {chartData.length ? <div className="pdm-chart">
       <ResponsiveContainer width="100%" height={330}>
         <ComposedChart data={chartData} margin={{ top: 19, right: 17, left: 0, bottom: 4 }}>
           <CartesianGrid stroke="#31455e" strokeDasharray="4 4" />
           <XAxis {...axis} dataKey="time" type="number" scale="time" domain={xDomain} tickCount={6} minTickGap={32} tickFormatter={(time: number) => (longView ? dateOnly : dateTime).format(time)} />
-          <YAxis {...axis} domain={[0, 'auto']} width={38} tickFormatter={(reading: number) => number.format(reading)} />
+          <YAxis {...axis} domain={[isThermal ? 'auto' : 0, 'auto']} width={38} tickFormatter={(reading: number) => number.format(reading)} />
           <Tooltip contentStyle={tooltipStyle} labelFormatter={(time) => `${dateTime.format(Number(time))} ICT`} formatter={(reading) =>
             Array.isArray(reading) ? `${reading.map((item) => number.format(Number(item))).join(' – ')} ${unit}`
               : typeof reading === 'number' ? `${number.format(reading)} ${unit}` : reading}
@@ -189,10 +192,10 @@ export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
           <Line type="linear" dataKey="reading" name="Recorded value" stroke={colors.reading} strokeWidth={2} dot={{ r: 2.7, fill: '#101d2f', strokeWidth: 1.5 }} isAnimationActive={false} />
           {outlook && <Line type="linear" dataKey="forecast" name="Projected trend" stroke={colors.projection} strokeWidth={2.5} strokeDasharray="7 5" dot={false} isAnimationActive={false} />}
           {inspectBy !== null && <ReferenceLine x={inspectBy} stroke={colors.baseline} strokeDasharray="3 4" label={{ value: 'Inspect by', position: 'insideBottomRight', fill: colors.baseline, fontSize: 11 }} />}
-          {warningAt !== null && <ReferenceLine x={warningAt} stroke={colors.warning} strokeDasharray="3 4" />}
-          {currentTime !== undefined && crossings.map(({ label, estimate, value: limit, color }) =>
-            estimate?.estimated != null && limit !== null
-              && <ReferenceDot key={label} x={currentTime + estimate.estimated * hourMs} y={limit} r={5} fill={color} stroke="#101d2f" />)}
+          {crossings.map(({ label, at, value: limit, color }) => at !== null && limit !== null
+            && <ReferenceLine key={label} x={at} stroke={color} strokeDasharray="3 4" />)}
+          {crossings.map(({ label, at, value: limit, color }) => at !== null && limit !== null
+            && <ReferenceDot key={label} x={at} y={limit} r={5} fill={color} stroke="#101d2f" />)}
         </ComposedChart>
       </ResponsiveContainer>
       <div className="pdm-legend">
@@ -205,8 +208,9 @@ export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
     <div className="pdm-foot">
       {status && <p>{status}</p>}
       {vdi && <p>VDI 3836:2012 · Group 3, {vdi.mount} mounting assumed for the demo. Warning is the operating ALARM from §5.1. Table 1 gives the zone boundaries used for review.</p>}
-      {!vdi && !isThermal && <p>VDI 3836 requires a verified machine group, installation, measurement bands and operating conditions for imported data.</p>}
-      {isThermal && <p>Airend housing temperature limits are project demo settings. Machine-specific limits require manufacturer or site data.</p>}
+      {!latest.simulated && <p>Imported thresholds require a verified machine configuration. The demo limits are disabled.</p>}
+      {thermal && <p>Airend housing temperature limits are project demo settings.</p>}
+      {isElectrical && latest.vdiExample && <p>P3 uses project Warning settings. A Critical limit is unconfigured.</p>}
       <p>All times in ICT. Forecasts estimate threshold crossings for inspection planning.</p>
     </div>
   </section>
