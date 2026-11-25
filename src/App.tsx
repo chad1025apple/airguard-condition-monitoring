@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import {
-  Activity, AlertTriangle, BellRing, BrainCircuit, Check, ChevronDown, CircleHelp,
+  Activity, AlertTriangle, BellRing, BrainCircuit, Check, CircleHelp,
   ClipboardCheck, Cpu, Database, Download, Factory, FileUp, Gauge, GitBranch,
   Menu, RefreshCw, RotateCcw, Save, Settings2, ShieldAlert, SlidersHorizontal, Thermometer, Upload,
   Vibrate, Waves, X, Zap,
@@ -12,9 +12,10 @@ import {
 import {
   type AlertStatus, type AppAlert, type Measurement, type Settings, type Severity, type Status, type View,
   assessMeasurement, avgCurrent, csvHeaders, currentUnbalance, defaultSettings, demoThermalLimits, featureHeaders,
+  legacyMetadataHeaders, measurementFeatures, presentationSpecs, standardGravity, windowMetadataHeaders,
   vdiDemoLimits, vibrationBaseline, vuf, type VibrationBand, type VdiMount,
 } from './domain'
-import { makeDemoData, recentAlerts, simulateMeasurement } from './demoData'
+import { exportRow, makeDemoData, recentAlerts, simulateMeasurement, type PresentationScenario } from './demoData'
 import { PdmTrend } from './PdmTrend'
 
 const navItems: { id: View; label: string; icon: typeof Gauge }[] = [
@@ -29,6 +30,13 @@ const navItems: { id: View; label: string; icon: typeof Gauge }[] = [
   { id: 'settings', label: 'System Settings', icon: Settings2 },
 ]
 
+const settingsKey = 'airguard-presentation-settings'
+const presentationCases: { id: PresentationScenario; label: string; slide: number }[] = [
+  { id: 'normal', label: 'Normal', slide: 19 },
+  { id: 'warning', label: 'Warning', slide: 20 },
+  { id: 'critical', label: 'Critical', slide: 21 },
+]
+
 const chartGrid = { stroke: '#26364d', strokeDasharray: '3 4' }
 const axis = { stroke: '#8292aa', fontSize: 11 }
 const statusClass: Record<Status, string> = {
@@ -37,7 +45,7 @@ const statusClass: Record<Status, string> = {
 
 function loadSettings() {
   try {
-    return { ...defaultSettings, ...JSON.parse(localStorage.getItem('airguard-settings') ?? '{}') } as Settings
+    return { ...defaultSettings, ...JSON.parse(localStorage.getItem(settingsKey) ?? '{}') } as Settings
   } catch {
     return defaultSettings
   }
@@ -96,6 +104,7 @@ function App() {
   const [navOpen, setNavOpen] = useState(false)
   const [range, setRange] = useState('24H')
   const [notice, setNotice] = useState('')
+  const [activeCase, setActiveCase] = useState<PresentationScenario | null>('normal')
 
   const latest = measurements.at(-1)!
   const assessment = assessMeasurement(latest, settings)
@@ -112,28 +121,24 @@ function App() {
     setNotice(message)
     window.setTimeout(() => setNotice(''), 3500)
   }
-  const loadDemo = (scenario: 'normal' | 'warning' | 'anomaly' = 'normal') => {
+  const loadDemo = (scenario: PresentationScenario = 'normal') => {
     const data = makeDemoData(settings.machineId, scenario)
-    updateData(data)
-    showNotice(scenario === 'anomaly' ? 'Anomaly-like demo condition loaded across the dashboard.' : 'Demo data loaded.')
+    setMeasurements(data)
+    setAlerts(recentAlerts(data, settings))
+    setActiveCase(scenario)
+    const example = presentationCases.find(({ id }) => id === scenario)
+    showNotice(`Slide ${example?.slide} · ${example?.label} demo loaded.`)
   }
   const simulate = (anomaly = false) => {
     if (!latest.vdiExample) return
     const next = simulateMeasurement(latest, settings, anomaly)
     updateData([...measurements.slice(-143), next])
-    showNotice(anomaly ? 'Anomaly measurement injected — diagnosis and alerts updated.' : 'New 10-second measurement simulated.')
-  }
-  const switchMachine = () => {
-    const machineId = settings.machineId === 'AC-TSA-01' ? 'AC-TSA-02' : 'AC-TSA-01'
-    const nextSettings = { ...settings, machineId, machineName: machineId === 'AC-TSA-01' ? 'Main Process Air Compressor' : 'Utilities Air Compressor' }
-    setSettings(nextSettings)
-    const data = makeDemoData(machineId, 'warning')
-    updateData(data, nextSettings)
-    showNotice(`Switched to ${machineId}.`)
+    setActiveCase(null)
+    showNotice(anomaly ? 'Anomaly measurement simulated.' : 'New 10-second measurement simulated.')
   }
   const saveSettings = (next: Settings) => {
     setSettings(next)
-    localStorage.setItem('airguard-settings', JSON.stringify(next))
+    localStorage.setItem(settingsKey, JSON.stringify(next))
     showNotice('System settings saved to local storage.')
   }
 
@@ -141,7 +146,7 @@ function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${navOpen ? 'open' : ''}`}>
       <div className="brand"><div className="brand-mark"><Waves size={21} /></div><div><strong>AirGuard</strong><span>CONDITION INTELLIGENCE</span></div><button className="mobile-close" onClick={() => setNavOpen(false)} aria-label="Close navigation"><X size={18} /></button></div>
-      <div className="machine-switcher"><span>ACTIVE ASSET</span><button onClick={switchMachine}><Factory size={15} /><b>{settings.machineId}</b><ChevronDown size={15} /></button></div>
+      <div className="machine-switcher"><span>ACTIVE ASSET</span><div className="machine-label"><Factory size={15} /><b>{latest.machineId}</b></div></div>
       <nav>{navItems.map(({ id, label, icon: Icon }) => <button key={id} className={view === id ? 'active' : ''} onClick={() => { setView(id); setNavOpen(false) }}><Icon size={18} /><span>{label}</span>{id === 'diagnosis' && currentStatus !== 'NORMAL' && <i className="nav-alert" />}</button>)}</nav>
       <div className="sidebar-foot"><DemoBadge /><small>Prototype v0.1 · 10 s window</small></div>
     </aside>
@@ -150,13 +155,13 @@ function App() {
       <header className="topbar"><button className="menu-button" onClick={() => setNavOpen(true)} aria-label="Open navigation"><Menu /></button><div className="breadcrumb">Operations <span>/</span> <b>{navItems.find((item) => item.id === view)?.label}</b></div><div className="header-actions"><span className="update-time">Last update <b>{formatTime(latest.timestamp)}</b></span><button className="icon-button" title="Load normal demo data" onClick={() => loadDemo()}><RefreshCw size={17} /></button><button className="profile" title="Engineer session">ME</button></div></header>
       <div className="content">
         {notice && <div className="toast"><Check size={17} />{notice}</div>}
-        {view === 'overview' && <Overview {...sharedProps} assessment={assessment} onSimulate={simulate} />}
+        {view === 'overview' && <Overview {...sharedProps} assessment={assessment} activeCase={activeCase} onLoadCase={loadDemo} onSimulate={simulate} />}
         {view === 'vibration' && <Vibration {...sharedProps} />}
         {view === 'electrical' && <Electrical {...sharedProps} />}
         {view === 'temperature' && <Temperature {...sharedProps} />}
         {view === 'diagnosis' && <Diagnosis {...sharedProps} />}
         {view === 'ai' && <AiDetection {...sharedProps} />}
-        {view === 'dataset' && <Dataset measurements={measurements} onImport={(next) => { updateData(next); showNotice(`${next.length} valid dataset rows imported for this session.`) }} />}
+        {view === 'dataset' && <Dataset measurements={measurements} onImport={(next) => { setMeasurements(next); setAlerts([]); setActiveCase(null); showNotice(`${next.length} valid dataset rows imported for this session.`) }} />}
         {view === 'alerts' && <Alerts alerts={alerts} setAlerts={setAlerts} />}
         {view === 'settings' && <SettingsPage value={settings} onSave={saveSettings} />}
       </div>
@@ -165,7 +170,7 @@ function App() {
   </div>
 }
 
-function Overview({ data, latest, settings, range, setRange, goTo, assessment, onSimulate }: { data: Measurement[]; latest: Measurement; settings: Settings; range: string; setRange: (r: string) => void; goTo: (view: View) => void; assessment: ReturnType<typeof assessMeasurement>; onSimulate: (anomaly?: boolean) => void }) {
+function Overview({ data, latest, settings, range, setRange, goTo, assessment, activeCase, onLoadCase, onSimulate }: { data: Measurement[]; latest: Measurement; settings: Settings; range: string; setRange: (r: string) => void; goTo: (view: View) => void; assessment: ReturnType<typeof assessMeasurement>; activeCase: PresentationScenario | null; onLoadCase: (scenario: PresentationScenario) => void; onSimulate: (anomaly?: boolean) => void }) {
   const { status: currentStatus, findings } = assessment
   const voltageUnbalance = vuf(latest)
   const phaseCurrentUnbalance = currentUnbalance(latest)
@@ -173,8 +178,14 @@ function Overview({ data, latest, settings, range, setRange, goTo, assessment, o
   const demoAnomaly = latest.vdiExample && latest.anomalyScore >= settings.anomalyThreshold
   const trend = data.slice(-48).map((m) => ({ ...m, time: formatTime(m.timestamp, true), current: avgCurrent(m), vuf: vuf(m) }))
   return <>
-    <PageTitle eyebrow="LIVE ASSET OVERVIEW" title="Compressor condition at a glance"><div className="page-actions"><button className="outline-button" disabled={!latest.vdiExample} onClick={() => onSimulate()}><RefreshCw size={16} />Simulate measurement</button><button className="primary-button" disabled={!latest.vdiExample} onClick={() => onSimulate(true)}><AlertTriangle size={16} />Simulate anomaly</button></div></PageTitle>
-    <div className="asset-strip"><div className="asset-icon"><Cpu /></div><div className="asset-main"><span>Machine</span><strong>{latest.vdiExample ? settings.machineName : latest.machineId}</strong><small>{latest.vdiExample ? `${settings.machineId} · Oil-injected twin-screw demo` : 'Imported dataset'}</small></div><div><span>Rated power</span><b>{latest.vdiExample ? `${settings.ratedPower} kW` : 'Unverified'}</b></div><div><span>Operating RPM</span><b>{latest.rpm.toLocaleString()} rpm</b></div><div><span>Load</span><b>{latest.load}%</b></div><div><span>Discharge pressure</span><b>{latest.pressure} bar</b></div><div className="asset-status"><span>Operating status</span><StatusBadge status={currentStatus} /></div></div>
+    <PageTitle eyebrow="LIVE ASSET OVERVIEW" title="Screw Airend condition at a glance"><div className="page-actions"><button className="outline-button" disabled={!latest.vdiExample} onClick={() => onSimulate()}><RefreshCw size={16} />Simulate measurement</button><button className="primary-button" disabled={!latest.vdiExample} onClick={() => onSimulate(true)}><AlertTriangle size={16} />Simulate anomaly</button></div></PageTitle>
+    <div className="presentation-cases">
+      <div><strong>Presentation examples</strong><span>Slides 19–21 · fixed demo readings</span></div>
+      <div className="segment" role="group" aria-label="Presentation examples">
+        {presentationCases.map(({ id, label, slide }) => <button key={id} type="button" className={activeCase === id ? 'active' : ''} aria-pressed={activeCase === id} onClick={() => onLoadCase(id)}>{label} <small>· Slide {slide}</small></button>)}
+      </div>
+    </div>
+    <div className="asset-strip"><div className="asset-icon"><Cpu /></div><div className="asset-main"><span>Machine</span><strong>{latest.vdiExample ? settings.machineName : latest.machineId}</strong><small>{latest.vdiExample ? `${settings.machineId} · Oil-injected twin-screw demo` : 'Imported dataset'}</small></div><div><span>Motor rating</span><b>{latest.vdiExample ? `${settings.ratedPower} kW` : 'Unverified'}</b></div><div><span>Operating RPM</span><b>{latest.rpm.toLocaleString()} rpm</b>{latest.vdiExample && <small>Nominal {settings.ratedRpm.toLocaleString()} rpm</small>}</div><div><span>Load</span><b>{latest.load}%</b></div><div><span>Discharge pressure</span><b>{latest.pressure} bar(g)</b>{latest.vdiExample && <small>FAD {presentationSpecs.freeAirDelivery} m³/min</small>}</div><div className="asset-status"><span>Operating status</span><StatusBadge status={currentStatus} /></div></div>
     <div className="assessment-banner">
       <div className={`status-orb ${statusClass[currentStatus]}`}><Activity /></div>
       <div className="assessment-result">
@@ -198,7 +209,7 @@ function Overview({ data, latest, settings, range, setRange, goTo, assessment, o
       <MetricCard label="Band B velocity RMS" value={latest.bandB} unit=" mm/s" detail={latest.vdiExample ? `${latest.point} · demo baseline ${vibrationBaseline(latest.point, 'bandB', settings)} mm/s` : latest.point} tone={findings.some(({ key }) => key === 'bandB') ? 'amber' : 'green'} icon={<Waves size={18} />} />
       <MetricCard label="Average 3-phase current" value={avgCurrent(latest).toFixed(1)} unit=" A" detail={phaseCurrentUnbalance === null ? 'Unbalance unavailable' : `Unbalance ${phaseCurrentUnbalance.toFixed(2)}%`} tone="blue" icon={<Zap size={18} />} />
       <MetricCard label="Bearing housing temperature" value={latest.temperature} unit=" °C" detail={thermal ? `Demo warning at ${thermal.warning} °C` : 'Limits not configured'} tone={findings.some(({ key }) => key === 'temperature') ? 'amber' : 'green'} icon={<Thermometer size={18} />} />
-      <MetricCard label="Acceleration RMS" value={latest.acceleration} unit=" g" detail={`Crest factor ${latest.crestFactor}`} tone="blue" icon={<Activity size={18} />} />
+      <MetricCard label="Acceleration RMS" value={latest.acceleration} unit=" m/s²" detail={`Crest factor ${latest.crestFactor}`} tone="blue" icon={<Activity size={18} />} />
       <MetricCard label="Voltage unbalance factor" value={voltageUnbalance?.toFixed(2) ?? 'Unavailable'} unit={voltageUnbalance === null ? undefined : ' %'} detail={latest.vdiExample ? `Project demo warning at ${settings.vufWarning}%` : 'Reported in CSV · method unverified'} tone={findings.some(({ key }) => key === 'vuf') ? 'amber' : 'green'} icon={<Zap size={18} />} />
       <MetricCard label="Isolation Forest score" value={latest.vdiExample ? latest.anomalyScore.toFixed(2) : 'Unavailable'} detail={latest.vdiExample ? `Demo threshold ${settings.anomalyThreshold} · ${demoAnomaly ? 'ANOMALY' : 'NORMAL'}` : 'No model run on imported data'} tone={demoAnomaly ? 'amber' : 'purple'} icon={<BrainCircuit size={18} />} />
       <MetricCard label="Data quality" value={latest.sensorStatus === 'Online' ? 'ONLINE' : 'OFFLINE'} detail={`${latest.point} sensor status`} tone="green" icon={<ClipboardCheck size={18} />} />
@@ -220,21 +231,24 @@ function Vibration({ data, latest, settings, range, setRange }: { data: Measurem
   const p1 = data.filter((m) => m.machineId === latest.machineId && m.point === 'P1').at(-1)
   const p2 = data.filter((m) => m.machineId === latest.machineId && m.point === 'P2').at(-1)
   const spectrum = Array.from({ length: 34 }, (_, index) => ({ frequency: index * 12, amplitude: Number((0.12 + Math.abs(Math.sin(index * 0.46)) * .55 + (index === 8 ? .65 : 0) + (index === 16 ? .38 : 0)).toFixed(2)), envelope: Number((0.05 + Math.abs(Math.cos(index * .35)) * .2 + (index === 18 ? .42 : 0)).toFixed(2)) }))
-  const features = [
-    ['F01', 'Band A Velocity RMS', latest.bandA, 'mm/s RMS'], ['F02', 'Band B Velocity RMS', latest.bandB, 'mm/s RMS'], ['F03', 'Acceleration RMS', latest.acceleration, 'g'], ['F04', 'Acceleration Absolute Peak', latest.accelerationPeak, 'g'], ['F05', 'Crest Factor', latest.crestFactor, ''], ['F06', 'Pearson Kurtosis', latest.kurtosis, ''], ['F07', '1× Velocity RMS', latest.oneX, 'mm/s RMS'], ['F08', '2× Velocity RMS', latest.twoX, 'mm/s RMS'], ['F09', 'Envelope RMS', latest.envelopeRms, 'g'], ['F10', 'Envelope Spectral Peak', latest.envelopePeak, 'g'],
-  ]
+  const features = measurementFeatures(latest).slice(0, 10)
+  const waveform = Array.from({ length: 64 }, (_, index) => {
+    const t = index * 2
+    const acceleration = latest.acceleration * (0.85 * Math.sin(t / 4) + 0.28 * Math.sin(t / 1.9))
+    return { t, acceleration: Number(acceleration.toFixed(2)) }
+  })
   return <>
     <PageTitle eyebrow="AIR END / VIBRATION" title="Vibration monitoring"><div className="page-actions"><RangeControl range={range} setRange={setRange} /></div></PageTitle>
     <div className="toolbar"><div className="segment"><span>Measurement point</span>{(['ALL', 'P1', 'P2'] as const).map((item) => <button key={item} onClick={() => setPoint(item)} className={point === item ? 'active' : ''}>{item === 'ALL' ? 'All points' : item}</button>)}</div><span className="info-copy">Velocity values are RMS. Trend data shown is simulated.</span></div>
     <div className="vibration-layout">
-      <Card title="Screw airend measurement diagram" subtitle="Illustrative diagram — not to scale" className="airend-card"><AirendDiagram active={point} /><div className="diagram-key"><span><i className="point p1" />P1 Drive / input side</span><span><i className="point p2" />P2 Opposite side</span></div></Card>
+      <Card title="Screw airend measurement points" subtitle="Slides 10–11 · piezoelectric accelerometers on the bearing housings" className="airend-card"><AirendDiagram active={point} /><div className="diagram-key"><span><i className="point p1" />P1 · DE (drive end)</span><span><i className="point p2" />P2 · NDE (non-drive end)</span></div></Card>
       <Card title="VDI 3836 demonstration" subtitle="Group 3 · screw airend without timing gears">
         <p className="disclaimer">{latest.vdiExample ? `The example assumes ${settings.vdiMount} mounting, radial housing readings and steady operation.` : 'Imported features are shown as recorded. Applicability of VDI 3836 is unverified.'}</p>
         <p className="disclaimer">Band A must capture at least the third harmonic of the discharge frequency with an upper cutoff of at least 1 kHz. For this screw compressor, Band B spans 10 Hz to 2.2× rotor speed in Hz. See VDI 3836 §2.1.</p>
       </Card>
     </div>
-    <div className="chart-grid two"><ChartPanel title="Overall vibration trend" subtitle="Velocity RMS, selected measurement point"><ResponsiveContainer width="100%" height={250}><LineChart data={filtered}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Legend /><Line type="monotone" dataKey="bandA" name="Band A" stroke="#29c9a3" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="bandB" name="Band B" stroke="#f3b450" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></ChartPanel><ChartPanel title="P1 vs P2 comparison" subtitle="Most recent window"><ResponsiveContainer width="100%" height={250}><BarChart data={[{ point: 'P1', bandA: p1?.bandA, bandB: p1?.bandB }, { point: 'P2', bandA: p2?.bandA, bandB: p2?.bandB }]}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="point" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Legend /><Bar dataKey="bandA" name="Band A" fill="#27c8a1" radius={[4, 4, 0, 0]} /><Bar dataKey="bandB" name="Band B" fill="#f4b352" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></ChartPanel>{latest.vdiExample && <><ChartPanel title="FFT spectrum — demo" subtitle="Illustrative spectrum · separate from demo band values"><ResponsiveContainer width="100%" height={250}><BarChart data={spectrum}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="frequency" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="amplitude" name="Amplitude" fill="#51a8ff" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></ChartPanel><ChartPanel title="Envelope spectrum — demo" subtitle="For engineer review; not an automatic bearing diagnosis"><ResponsiveContainer width="100%" height={250}><BarChart data={spectrum}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="frequency" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="envelope" name="Envelope" fill="#b28cff" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></ChartPanel></>}</div>
-    <Card title="Feature extraction" subtitle="The ten vibration features supplied to the AI input vector"><div className="feature-grid">{features.map(([code, label, value, unit]) => <div key={String(code)}><span>{code}</span><p>{label}</p><strong>{value} <small>{unit}</small></strong></div>)}</div></Card>
+    <div className="chart-grid two"><ChartPanel title="Overall vibration trend" subtitle="Velocity RMS, selected measurement point"><ResponsiveContainer width="100%" height={250}><LineChart data={filtered}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Legend /><Line type="monotone" dataKey="bandA" name="Band A" stroke="#29c9a3" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="bandB" name="Band B" stroke="#f3b450" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></ChartPanel><ChartPanel title="P1 vs P2 comparison" subtitle="Most recent window"><ResponsiveContainer width="100%" height={250}><BarChart data={[{ point: 'P1', bandA: p1?.bandA, bandB: p1?.bandB }, { point: 'P2', bandA: p2?.bandA, bandB: p2?.bandB }]}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="point" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Legend /><Bar dataKey="bandA" name="Band A" fill="#27c8a1" radius={[4, 4, 0, 0]} /><Bar dataKey="bandB" name="Band B" fill="#f4b352" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></ChartPanel>{latest.vdiExample && <><ChartPanel title="Acceleration waveform" subtitle="Illustrative time waveform · m/s²"><ResponsiveContainer width="100%" height={250}><LineChart data={waveform}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="t" {...axis} unit=" ms" /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Line dataKey="acceleration" name="Acceleration (m/s²)" stroke="#55a9ff" dot={false} /></LineChart></ResponsiveContainer></ChartPanel><ChartPanel title="FFT spectrum — demo" subtitle="Illustrative spectrum · separate from demo band values"><ResponsiveContainer width="100%" height={250}><BarChart data={spectrum}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="frequency" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="amplitude" name="Amplitude" fill="#51a8ff" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></ChartPanel><ChartPanel title="Envelope spectrum — demo" subtitle="For engineer review; not an automatic bearing diagnosis"><ResponsiveContainer width="100%" height={250}><BarChart data={spectrum}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="frequency" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="envelope" name="Envelope" fill="#b28cff" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></ChartPanel></>}</div>
+    <Card title="Vibration features F01–F10" subtitle="Slides 12–13 · model input units"><FeatureValues features={features} /></Card>
     <VdiAssessment readings={[p1, p2]} settings={settings} />
   </>
 }
@@ -269,6 +283,13 @@ function AirendDiagram({ active }: { active: 'ALL' | 'P1' | 'P2' }) {
   return <svg className="airend-diagram" viewBox="0 0 520 190" role="img" aria-label="Illustrative twin screw airend diagram with P1 and P2 measurement points"><defs><linearGradient id="body" x1="0" x2="1"><stop stopColor="#263950" /><stop offset=".5" stopColor="#405973" /><stop offset="1" stopColor="#27394f" /></linearGradient></defs><rect x="78" y="56" width="365" height="80" rx="38" fill="url(#body)" stroke="#6f8baa" strokeWidth="2" /><rect x="137" y="68" width="230" height="56" rx="27" fill="#17283b" stroke="#7292b4" /><path d="M158 96c17-28 36 28 54 0s37-28 55 0 37 28 55 0 37-28 55 0" fill="none" stroke="#62c7dc" strokeWidth="7" strokeLinecap="round" /><path d="M158 106c17-28 36 28 54 0s37-28 55 0 37 28 55 0 37-28 55 0" fill="none" stroke="#d2a654" strokeWidth="7" strokeLinecap="round" /><circle cx="93" cy="96" r="33" fill="#17263a" stroke="#7795b3" strokeWidth="3" /><circle cx="428" cy="96" r="33" fill="#17263a" stroke="#7795b3" strokeWidth="3" /><rect x="38" y="78" width="28" height="36" rx="4" fill="#324a64" /><rect x="454" y="78" width="28" height="36" rx="4" fill="#324a64" /><line x1="96" y1="48" x2="96" y2="19" stroke="#34d6ae" strokeWidth="2" /><circle cx="96" cy="54" r="8" fill={active === 'P2' ? '#42536a' : '#34d6ae'} /><text x="72" y="16" fill="#d7e6f7" fontSize="14" fontWeight="700">P1</text><text x="36" y="170" fill="#8fa4bd" fontSize="12">Drive / input side</text><line x1="426" y1="48" x2="426" y2="19" stroke="#f5b454" strokeWidth="2" /><circle cx="426" cy="54" r="8" fill={active === 'P1' ? '#42536a' : '#f5b454'} /><text x="402" y="16" fill="#d7e6f7" fontSize="14" fontWeight="700">P2</text><text x="387" y="170" fill="#8fa4bd" fontSize="12">Opposite side</text></svg>
 }
 
+function FeatureValues({ features }: { features: ReturnType<typeof measurementFeatures> }) {
+  return <div className="feature-grid">{features.map(({ code, label, value, unit }) => <div key={code}>
+    <span>{code}</span><p>{label}</p>
+    <strong>{value === null ? '—' : value.toFixed(2)} {value !== null && <small>{unit}</small>}</strong>
+  </div>)}</div>
+}
+
 function formatPercent(value: number | null) {
   return value === null ? 'Unavailable' : `${value.toFixed(2)}%`
 }
@@ -285,11 +306,11 @@ function Electrical({ data, latest, settings, range, setRange }: { data: Measure
   ]
 
   return <>
-    <PageTitle eyebrow="DRIVE MOTOR / ELECTRICAL" title="Electrical monitoring"><RangeControl range={range} setRange={setRange} /></PageTitle>
+    <PageTitle eyebrow="DRIVE MOTOR / ELECTRICAL" title="P3 · Motor terminal box"><RangeControl range={range} setRange={setRange} /></PageTitle>
     <div className="callout"><CircleHelp size={18} /><p>
       {latest.csvElectrical
         ? 'F11–F13 come from the imported CSV. Per-phase readings and the VUF calculation method are unavailable.'
-        : 'Demo VUF uses the negative-to-positive sequence ratio from three fundamental line-to-line RMS voltages, assuming normal phase rotation. See IEC 60034-26:2006 §4 and Annex A.'}
+        : 'P3 monitors the motor supply using CTs and voltage transducers. Demo VUF is the negative-to-positive sequence ratio from line-to-line RMS voltages (IEC 60034-26:2006 §4 and Annex A).'}
     </p></div>
     <div className="metric-grid three">
       <MetricCard label="Average 3-phase current" value={avgCurrent(latest).toFixed(1)} unit=" A" detail="RMS" tone="blue" />
@@ -331,7 +352,7 @@ function Temperature({ data, latest, settings, range, setRange }: { data: Measur
       <div className="thermo-visual"><div className="thermo-tube"><i style={{ height: `${Math.min(90, Math.max(0, latest.temperature / 105 * 100))}%` }} /></div><span>°C</span></div>
       <div>
         <span>AIREND HOUSING · {latest.point}</span><h2>Housing temperature near bearing</h2>
-        <p>Verify machine-specific limits at this measurement point with the manufacturer or site engineering.</p>
+        <p>F14 is measured on the airend housing near the bearing. The slide illustration shows the sensor near P2 (NDE). Temperature limits need machine-specific confirmation.</p>
         {limits && <div className="threshold-row"><div><span>Project demo warning</span><b>{limits.warning} °C</b></div><div><span>Project demo critical</span><b>{limits.critical} °C</b></div></div>}
       </div>
       <div className="temperature-status"><span>Current temperature</span><strong>{latest.sensorStatus === 'Online' ? latest.temperature : '—'}<small>°C</small></strong><StatusBadge status={status} /></div>
@@ -360,6 +381,9 @@ function Diagnosis({ data, latest, settings, range, setRange }: { data: Measurem
   return <>
     <PageTitle eyebrow="DECISION SUPPORT" title="Fault diagnosis support"><RangeControl range={range} setRange={setRange} /></PageTitle>
     <div className="preliminary"><ShieldAlert /><div><strong>ENGINEER VERIFICATION REQUIRED</strong><span>Use the measured signals, operating conditions and inspection history to check possible causes. ISO 13373-3 and ISO 13379-1 provide diagnostic guidance.</span></div></div>
+    <div className="diagnosis-sequence" aria-label="Diagnosis workflow">
+      <span>Validate anomaly</span><span>Fault candidates</span><span>Evidence report</span><span>Human verification</span>
+    </div>
     <div className="diagnosis-grid">
       <Card title="Engineering evidence" subtitle={latest.vdiExample ? 'Latest demo window' : 'Machine criteria not configured'}>
         {engineering.length ? engineering.map(({ key, label, value, limit, unit, level }) => <div key={key} className="evidence-item active">
@@ -379,10 +403,22 @@ function Diagnosis({ data, latest, settings, range, setRange }: { data: Measurem
       <ChartPanel title="Band B vibration" subtitle="Selected point · mm/s RMS">
         <ResponsiveContainer width="100%" height={240}><LineChart data={trend}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Line dataKey="bandB" name="Band B" stroke="#f4b352" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
       </ChartPanel>
-      <ChartPanel title="Envelope RMS" subtitle="Supporting feature · g">
+      <ChartPanel title="Envelope RMS" subtitle="Supporting feature · m/s²">
         <ResponsiveContainer width="100%" height={240}><LineChart data={trend}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Line dataKey="envelopeRms" name="Envelope RMS" stroke="#ae8dff" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
       </ChartPanel>
     </div>
+    <Card title="Candidate signatures to verify" subtitle="Slide 18 · compare signatures and inspect before assigning a cause" className="sensor-chart-grid">
+      <div className="table-wrap"><table>
+        <thead><tr><th>Evidence pattern</th><th>Possible candidate</th><th>Verification</th></tr></thead>
+        <tbody>
+          <tr><td>Dominant FFT 1×</td><td>Unbalance</td><td>Phase, direction, load and rotor</td></tr>
+          <tr><td>FFT 1× / 2× with axial response</td><td>Misalignment</td><td>Alignment and coupling</td></tr>
+          <tr><td>Multiple harmonics</td><td>Looseness</td><td>Mounting bolts, base and clearance</td></tr>
+          <tr><td>Envelope peaks at bearing frequencies</td><td>Bearing defect</td><td>RPM, bearing geometry, harmonics and repeat measurements</td></tr>
+        </tbody>
+      </table></div>
+    </Card>
+    <p className="disclaimer">CBM uses changes from baseline to decide when to inspect. PdM uses consistent trends and evidence to plan work. After maintenance, measure again and record the result against the baseline.</p>
   </>
 }
 
@@ -390,12 +426,31 @@ function AiDetection({ data, latest, settings, range, setRange }: { data: Measur
   if (!latest.vdiExample) return <><PageTitle eyebrow="UNSUPERVISED ML / DEMO" title="AI anomaly detection" /><Card title="Model unavailable for imported data"><p className="disclaimer">This prototype displays simulated Isolation Forest scores for the built-in demo. A trained and validated model is required for CSV readings.</p></Card></>
   const trend = data.slice(-48).map((m) => ({ ...m, time: formatTime(m.timestamp, true), current: avgCurrent(m) }))
   const distribution = [{ name: 'Normal', value: data.filter((m) => m.anomalyScore < settings.anomalyThreshold).length }, { name: 'Anomaly', value: data.filter((m) => m.anomalyScore >= settings.anomalyThreshold).length }]
-  const featureOverview = [{ name: 'F01', value: latest.bandA }, { name: 'F02', value: latest.bandB }, { name: 'F03', value: latest.acceleration }, { name: 'F09', value: latest.envelopeRms }, { name: 'F11', value: avgCurrent(latest) / 40 }, { name: 'F12', value: currentUnbalance(latest) }, { name: 'F13', value: vuf(latest) }, { name: 'F14', value: latest.temperature / 25 }]
   const recentAnomalies = data.filter((m) => m.anomalyScore >= settings.anomalyThreshold).slice(-5).reverse()
-  return <><PageTitle eyebrow="UNSUPERVISED ML / DEMO" title="AI anomaly detection"><RangeControl range={range} setRange={setRange} /></PageTitle><div className="ai-notice"><BrainCircuit /><div><b>DEMO MODE — Isolation Forest is not connected or trained in this prototype.</b><span>Scores are realistic mock values for interface testing. They are not failure probabilities, RUL estimates, or a direct cause diagnosis.</span></div><span className="model-chip">{settings.modelVersion}</span></div><div className="metric-grid three"><MetricCard label="Anomaly score" value={latest.anomalyScore.toFixed(2)} detail="Mock Isolation Forest output" tone="purple" icon={<Activity size={18} />} /><MetricCard label="Detection threshold" value={settings.anomalyThreshold.toFixed(2)} detail="Project-configurable demo threshold" tone="blue" icon={<SlidersHorizontal size={18} />} /><MetricCard label="Prediction result" value={latest.anomalyScore >= settings.anomalyThreshold ? 'ANOMALY' : 'NORMAL'} detail={`Operating: ${latest.load}% load · ${latest.rpm} rpm`} tone={latest.anomalyScore >= settings.anomalyThreshold ? 'amber' : 'green'} icon={<BrainCircuit size={18} />} /></div><div className="ai-workflow"><span>14 features</span><i>→</i><span>Isolation Trees</span><i>→</i><span>Anomaly score</span><i>→</i><span>Threshold comparison</span><i>→</i><b>{latest.anomalyScore >= settings.anomalyThreshold ? 'ANOMALY' : 'NORMAL'}</b></div><div className="chart-grid two"><ChartPanel title="Anomaly score trend" subtitle="Threshold line is project-configured"><ResponsiveContainer width="100%" height={255}><LineChart data={trend}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis domain={[0, 1]} {...axis} /><Tooltip contentStyle={tooltipStyle} /><Legend /><Line type="monotone" dataKey="anomalyScore" name="Score" stroke="#aa8bff" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey={() => settings.anomalyThreshold} name="Threshold" stroke="#f4b352" strokeDasharray="4 4" dot={false} /></LineChart></ResponsiveContainer></ChartPanel><ChartPanel title="Normal / anomaly distribution" subtitle="Selected demo data"><ResponsiveContainer width="100%" height={255}><PieChart><Pie data={distribution} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={4}>{distribution.map((entry) => <Cell key={entry.name} fill={entry.name === 'Normal' ? '#28c9a3' : '#ef6a6a'} />)}</Pie><Tooltip contentStyle={tooltipStyle} /><Legend /></PieChart></ResponsiveContainer></ChartPanel><ChartPanel title="F01 versus F11" subtitle="Band A velocity RMS vs average 3-phase current"><ResponsiveContainer width="100%" height={255}><ScatterChart><CartesianGrid {...chartGrid} /><XAxis type="number" dataKey="bandA" name="F01" {...axis} /><YAxis type="number" dataKey="current" name="F11" {...axis} /><Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={tooltipStyle} /><Scatter name="Measurement" data={trend} fill="#55a9ff" /></ScatterChart></ResponsiveContainer></ChartPanel><ChartPanel title="Feature overview" subtitle="Normalized display for current window"><ResponsiveContainer width="100%" height={255}><BarChart data={featureOverview}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="name" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="value" fill="#a98aff" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></ChartPanel></div><Card title="Recent anomaly events" subtitle="Demo-score events requiring further inspection"><div className="mini-table"><div><span>Timestamp</span><span>Score</span><span>Operating condition</span><span>Result</span></div>{recentAnomalies.length ? recentAnomalies.map((item) => <div key={item.id}><span>{formatTime(item.timestamp)}</span><b>{item.anomalyScore.toFixed(2)}</b><span>{item.load}% load · {item.rpm} rpm</span><StatusBadge compact status="WARNING" /></div>) : <p>No demo anomaly events in the selected dataset.</p>}</div><p className="disclaimer">A healthy baseline dataset, train/validation/test split and false-alarm evaluation are required before a real model can be claimed.</p></Card></>
+  return <><PageTitle eyebrow="UNSUPERVISED ML / DEMO" title="AI anomaly detection"><RangeControl range={range} setRange={setRange} /></PageTitle><div className="ai-notice"><BrainCircuit /><div><b>DEMO MODE — Isolation Forest is not connected or trained in this prototype.</b><span>Scores are realistic mock values for interface testing. They are not failure probabilities, RUL estimates, or a direct cause diagnosis.</span></div><span className="model-chip">{settings.modelVersion}</span></div><div className="metric-grid three"><MetricCard label="Anomaly score" value={latest.anomalyScore.toFixed(2)} detail="Mock Isolation Forest output" tone="purple" icon={<Activity size={18} />} /><MetricCard label="Detection threshold" value={settings.anomalyThreshold.toFixed(2)} detail="Project-configurable demo threshold" tone="blue" icon={<SlidersHorizontal size={18} />} /><MetricCard label="Demo classification" value={latest.anomalyScore >= settings.anomalyThreshold ? 'ANOMALY' : 'NORMAL'} detail={`Operating: ${latest.load}% load · ${latest.rpm} rpm`} tone={latest.anomalyScore >= settings.anomalyThreshold ? 'amber' : 'green'} icon={<BrainCircuit size={18} />} /></div><div className="ai-workflow"><span>14 features</span><i>→</i><span>Isolation Trees</span><i>→</i><span>Anomaly score</span><i>→</i><span>Threshold comparison</span><i>→</i><b>{latest.anomalyScore >= settings.anomalyThreshold ? 'ANOMALY' : 'NORMAL'}</b></div><div className="chart-grid two"><ChartPanel title="Anomaly score trend" subtitle="Threshold line is project-configured"><ResponsiveContainer width="100%" height={255}><LineChart data={trend}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis domain={[0, 1]} {...axis} /><Tooltip contentStyle={tooltipStyle} /><Legend /><Line type="monotone" dataKey="anomalyScore" name="Score" stroke="#aa8bff" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey={() => settings.anomalyThreshold} name="Threshold" stroke="#f4b352" strokeDasharray="4 4" dot={false} /></LineChart></ResponsiveContainer></ChartPanel><ChartPanel title="Normal / anomaly distribution" subtitle="Selected demo data"><ResponsiveContainer width="100%" height={255}><PieChart><Pie data={distribution} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={4}>{distribution.map((entry) => <Cell key={entry.name} fill={entry.name === 'Normal' ? '#28c9a3' : '#ef6a6a'} />)}</Pie><Tooltip contentStyle={tooltipStyle} /><Legend /></PieChart></ResponsiveContainer></ChartPanel><ChartPanel title="F01 versus F11" subtitle="Band A velocity RMS vs average 3-phase current"><ResponsiveContainer width="100%" height={255}><ScatterChart><CartesianGrid {...chartGrid} /><XAxis type="number" dataKey="bandA" name="F01" {...axis} /><YAxis type="number" dataKey="current" name="F11" {...axis} /><Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={tooltipStyle} /><Legend /><Scatter name="Demo normal" data={trend.filter((m) => m.anomalyScore < settings.anomalyThreshold)} fill="#36d4b0" /><Scatter name="Demo anomaly" data={trend.filter((m) => m.anomalyScore >= settings.anomalyThreshold)} fill="#ff8088" /></ScatterChart></ResponsiveContainer></ChartPanel><Card title="Model input · F01–F14" subtitle="One row per window · 1 × 14"><FeatureValues features={measurementFeatures(latest)} /></Card></div><Card title="Recent anomaly events" subtitle="Demo-score events requiring further inspection"><div className="mini-table"><div><span>Timestamp</span><span>Score</span><span>Operating condition</span><span>Result</span></div>{recentAnomalies.length ? recentAnomalies.map((item) => <div key={item.id}><span>{formatTime(item.timestamp)}</span><b>{item.anomalyScore.toFixed(2)}</b><span>{item.load}% load · {item.rpm} rpm</span><StatusBadge compact status="WARNING" /></div>) : <p>No demo anomaly events in the selected dataset.</p>}</div><p className="disclaimer">A healthy baseline dataset, train/validation/test split and false-alarm evaluation are required before a real model can be claimed.</p></Card>
+    <div className="chart-grid two sensor-chart-grid">
+      <Card title="Isolation Forest example" subtitle="Slide 15 · example input">
+        <p className="disclaimer">F11 = 62 A · F01 = 3.90 mm/s · F14 = 57.5 °C</p>
+        <ol className="inspection-list">
+          <li>Tree 1 · Band A &gt; 3.0 · 1 split</li>
+          <li>Tree 2 · Current ≤ 65 A, Band A &gt; 2.8 · 2 splits</li>
+          <li>Tree 3 · Temperature ≤ 70 °C, current ≤ 66 A, Band A &gt; 3.0 · 3 splits</li>
+        </ol>
+        <p className="disclaimer">These example splits illustrate path length. The dashboard scores are fixed demo outputs.</p>
+      </Card>
+      <Card title="Training and validation plan" subtitle="Slide 17 · proposed model workflow">
+        <ol className="inspection-list">
+          <li>Confirm healthy operation across RPM and load.</li>
+          <li>Split by time before forming windows to prevent leakage.</li>
+          <li>Train on healthy data, set the threshold on validation data, then freeze it before testing.</li>
+          <li>Measure false alerts and detection against verified events.</li>
+        </ol>
+      </Card>
+    </div>
+  </>
 }
 
-interface Validation { fileName: string; total: number; valid: number; invalid: number; issues: string[]; rows: Measurement[] }
+interface Validation { fileName: string; total: number; valid: number; invalid: number; issues: string[]; rows: Measurement[]; legacyUnits: boolean }
 function Dataset({ measurements, onImport }: { measurements: Measurement[]; onImport: (next: Measurement[]) => void }) {
   const [validation, setValidation] = useState<Validation | null>(null)
   const [query, setQuery] = useState('')
@@ -409,7 +464,11 @@ function Dataset({ measurements, onImport }: { measurements: Measurement[]; onIm
       const text = String(reader.result ?? '').replace(/^\uFEFF/, '').trim()
       const [head, ...lines] = text.split(/\r?\n/).filter(Boolean)
       const headers = head.split(',').map((item) => item.trim())
-      const missing = csvHeaders.filter((header) => !headers.includes(header))
+      const extraCount = windowMetadataHeaders.filter((header) => headers.includes(header)).length
+      const presentationFormat = extraCount === windowMetadataHeaders.length
+      const missing = [...legacyMetadataHeaders, ...featureHeaders].filter((header) => !headers.includes(header))
+      if (extraCount > 0 && !presentationFormat) missing.push(...windowMetadataHeaders.filter((header) => !headers.includes(header)))
+      const accelerationScale = presentationFormat ? 1 : standardGravity
       const issues: string[] = missing.length ? [`Missing required header(s): ${missing.join(', ')}`] : []
       const rows: Measurement[] = []
       let invalid = 0
@@ -418,21 +477,72 @@ function Dataset({ measurements, onImport }: { measurements: Measurement[]; onIm
         const get = (header: string) => values[headers.indexOf(header)] ?? ''
         const numeric = [...featureHeaders, 'RPM', 'Load_Percent', 'Discharge_Pressure'].every((header) => get(header) !== '' && Number.isFinite(Number(get(header))))
         if (!numeric || !get('Machine_ID') || !Number.isFinite(Date.parse(get('Timestamp'))) || !['P1', 'P2'].includes(get('Measurement_Point'))) { invalid += 1; return }
-        rows.push({ id: `import-${index}`, timestamp: get('Timestamp'), machineId: get('Machine_ID'), point: get('Measurement_Point') as 'P1' | 'P2', direction: get('Direction'), rpm: Number(get('RPM')), load: Number(get('Load_Percent')), pressure: Number(get('Discharge_Pressure')), sensorStatus: get('Sensor_Status') === 'Offline' ? 'Offline' : 'Online', csvElectrical: { averageCurrent: Number(get('F11_Average_3phase_Current_RMS')), currentUnbalance: Number(get('F12_Current_Unbalance_Index')), vuf: Number(get('F13_Voltage_Unbalance_Factor')) }, bandA: Number(get('F01_Band_A_Velocity_RMS')), bandB: Number(get('F02_Band_B_Velocity_RMS')), acceleration: Number(get('F03_Acceleration_RMS')), accelerationPeak: Number(get('F04_Acceleration_Absolute_Peak')), crestFactor: Number(get('F05_Crest_Factor')), kurtosis: Number(get('F06_Pearson_Kurtosis')), oneX: Number(get('F07_1x_Velocity_RMS')), twoX: Number(get('F08_2x_Velocity_RMS')), envelopeRms: Number(get('F09_Envelope_RMS')), envelopePeak: Number(get('F10_Envelope_Spectral_Peak')), temperature: Number(get('F14_Housing_Temperature')), anomalyScore: 0, anomaly: false })
+        const windowEnd = get('Window_End')
+        const sampleRate = get('Sample_Rate_Hz')
+        if ((windowEnd && !(Date.parse(windowEnd) > Date.parse(get('Timestamp')))) ||
+            (sampleRate && !(Number.isFinite(Number(sampleRate)) && Number(sampleRate) > 0))) { invalid += 1; return }
+        rows.push({
+          id: `import-${index}`,
+          windowId: get('Window_ID') || undefined,
+          timestamp: get('Timestamp'),
+          windowEnd: windowEnd || undefined,
+          sampleRateHz: sampleRate ? Number(sampleRate) : undefined,
+          operatingState: get('Operating_State') || undefined,
+          machineId: get('Machine_ID'),
+          point: get('Measurement_Point') as Measurement['point'],
+          direction: get('Direction'),
+          rpm: Number(get('RPM')),
+          load: Number(get('Load_Percent')),
+          pressure: Number(get('Discharge_Pressure')),
+          sensorStatus: get('Sensor_Status') === 'Offline' ? 'Offline' : 'Online',
+          csvElectrical: {
+            averageCurrent: Number(get('F11_Average_3phase_Current_RMS')),
+            currentUnbalance: Number(get('F12_Current_Unbalance_Index')),
+            vuf: Number(get('F13_Voltage_Unbalance_Factor')),
+          },
+          bandA: Number(get('F01_Band_A_Velocity_RMS')),
+          bandB: Number(get('F02_Band_B_Velocity_RMS')),
+          acceleration: Number(get('F03_Acceleration_RMS')) * accelerationScale,
+          accelerationPeak: Number(get('F04_Acceleration_Absolute_Peak')) * accelerationScale,
+          crestFactor: Number(get('F05_Crest_Factor')),
+          kurtosis: Number(get('F06_Pearson_Kurtosis')),
+          oneX: Number(get('F07_1x_Velocity_RMS')),
+          twoX: Number(get('F08_2x_Velocity_RMS')),
+          envelopeRms: Number(get('F09_Envelope_RMS')) * accelerationScale,
+          envelopePeak: Number(get('F10_Envelope_Spectral_Peak')) * accelerationScale,
+          temperature: Number(get('F14_Housing_Temperature')),
+          anomalyScore: 0,
+          anomaly: false,
+        })
       })
       if (!lines.length) issues.push('Dataset contains no measurement rows.')
       if (invalid) issues.push(`${invalid} row(s) have missing or invalid required values, including timestamps.`)
       rows.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
-      setValidation({ fileName: file.name, total: lines.length, valid: rows.length, invalid: invalid + (missing.length ? lines.length : 0), issues, rows })
+      setValidation({ fileName: file.name, total: lines.length, valid: rows.length, invalid: invalid + (missing.length ? lines.length : 0), issues, rows, legacyUnits: !presentationFormat })
     }
     reader.readAsText(file)
   }
   const downloadTemplate = () => {
-    const blob = new Blob([`${csvHeaders.join(',')}\nAC-TSA-01,2026-11-22T08:00:00Z,P1,Radial,2960,72,7.1,Online,2.1,1.6,0.75,2.9,3.9,3.2,0.6,0.4,0.38,1.15,167.2,1.1,0.4,69.5\n`], { type: 'text/csv' })
+    const sample = makeDemoData(presentationSpecs.machineId).at(-1)!
+    const row = exportRow({ ...sample, windowId: 'T01', operatingState: 'Simulated template row' })
+    const blob = new Blob([`${csvHeaders.join(',')}\n${row.join(',')}\n`], { type: 'text/csv' })
     const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'airguard-dataset-template.csv'; link.click(); URL.revokeObjectURL(url)
   }
   const display = measurements.filter((row) => row.machineId.toLowerCase().includes(query.toLowerCase()) || row.timestamp.toLowerCase().includes(query.toLowerCase())).slice((page - 1) * 8, page * 8)
-  return <><PageTitle eyebrow="DATA PIPELINE" title="Dataset management"><div className="page-actions"><button className="outline-button" onClick={downloadTemplate}><Download size={16} />Download CSV template</button><button className="primary-button" onClick={() => fileRef.current?.click()}><Upload size={16} />Upload CSV</button><input ref={fileRef} className="visually-hidden" type="file" accept=".csv,text/csv" onChange={parseFile} /></div></PageTitle><div className="dataset-rules"><FileUp /><div><b>Measurement window schema</b><span>One CSV row = one 10-second measurement window. Metadata identifies context and is never sent to Isolation Forest as a model feature.</span></div></div><div className="upload-zone" onClick={() => fileRef.current?.click()}><Upload size={28} /><h2>Upload condition-monitoring CSV</h2><p>Validate headers, data type and missing values before import.</p><button className="outline-button">Choose CSV file</button><small>Required: Machine_ID, Timestamp, P1/P2 and F01–F14</small></div>{validation && <Card title="Validation result" subtitle={validation.fileName}><div className="validation-summary"><div><span>Total rows</span><b>{validation.total}</b></div><div className="good"><span>Valid rows</span><b>{validation.valid}</b></div><div className="bad"><span>Invalid rows</span><b>{validation.invalid}</b></div><div><span>Header status</span><b>{validation.issues.some((issue) => issue.startsWith('Missing')) ? 'Invalid' : 'Checked'}</b></div></div>{validation.issues.length > 0 ? <ul className="issues">{validation.issues.map((issue) => <li key={issue}><AlertTriangle size={15} />{issue}</li>)}</ul> : <div className="success-line"><Check size={17} />Headers and required values passed validation.</div>}<div className="panel-actions"><button className="outline-button" onClick={() => setValidation(null)}>Discard</button><button className="primary-button" disabled={!validation.valid} onClick={() => onImport(validation.rows)}><Database size={16} />Import {validation.valid} valid row(s)</button></div></Card>}<Card title="Imported / demo data preview" subtitle={`${measurements.length} measurement windows available in this browser session`} action={<input className="table-search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search machine or timestamp" />}><div className="table-wrap"><table><thead><tr><th>Timestamp</th><th>Machine</th><th>Point</th><th>RPM</th><th>Load</th><th>Band A</th><th>Band B</th><th>Temperature</th><th>Sensor</th></tr></thead><tbody>{display.map((row) => <tr key={row.id}><td>{formatTime(row.timestamp)}</td><td>{row.machineId}</td><td><span className="point-tag">{row.point}</span></td><td>{row.rpm}</td><td>{row.load}%</td><td>{row.bandA} mm/s</td><td>{row.bandB} mm/s</td><td>{row.temperature} °C</td><td><span className="online">● Online</span></td></tr>)}</tbody></table></div><div className="pagination"><span>Page {page}</span><button disabled={page === 1} onClick={() => setPage((current) => current - 1)}>Previous</button><button disabled={page * 8 >= measurements.length} onClick={() => setPage((current) => current + 1)}>Next</button></div></Card></>
+  return <><PageTitle eyebrow="DATA PIPELINE" title="Dataset management"><div className="page-actions"><button className="outline-button" onClick={downloadTemplate}><Download size={16} />Download CSV template</button><button className="primary-button" onClick={() => fileRef.current?.click()}><Upload size={16} />Upload CSV</button><input ref={fileRef} className="visually-hidden" type="file" accept=".csv,text/csv" onChange={parseFile} /></div></PageTitle><div className="dataset-rules"><FileUp /><div><b>Measurement window schema</b><span>Slide 16 · a 10-second window has 12 metadata fields and 14 model features. The new template uses m/s². Legacy files with eight metadata columns use g for F03, F04, F09 and F10 and are converted on import.</span></div></div><DatasetSlideExample /><div className="upload-zone" onClick={() => fileRef.current?.click()}><Upload size={28} /><h2>Upload condition-monitoring CSV</h2><p>Validate headers, data type and missing values before import.</p><button className="outline-button">Choose CSV file</button><small>Required: Machine_ID, Timestamp, P1/P2 and F01–F14</small></div>{validation && <Card title="Validation result" subtitle={validation.fileName}><div className="validation-summary"><div><span>Total rows</span><b>{validation.total}</b></div><div className="good"><span>Valid rows</span><b>{validation.valid}</b></div><div className="bad"><span>Invalid rows</span><b>{validation.invalid}</b></div><div><span>Header status</span><b>{validation.issues.some((issue) => issue.startsWith('Missing')) ? 'Invalid' : 'Checked'}</b></div></div>{validation.issues.length > 0 ? <ul className="issues">{validation.issues.map((issue) => <li key={issue}><AlertTriangle size={15} />{issue}</li>)}</ul> : <div className="success-line"><Check size={17} />Headers and required values passed validation.</div>}{validation.valid > 0 && <p className="disclaimer">{validation.legacyUnits ? 'Legacy CSV · converted the four acceleration features from g to m/s².' : 'Presentation CSV · acceleration features interpreted as m/s².'}</p>}<div className="panel-actions"><button className="outline-button" onClick={() => setValidation(null)}>Discard</button><button className="primary-button" disabled={!validation.valid} onClick={() => onImport(validation.rows)}><Database size={16} />Import {validation.valid} valid row(s)</button></div></Card>}<Card title="Imported / demo data preview" subtitle={`${measurements.length} measurement windows available in this browser session`} action={<input className="table-search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search machine or timestamp" />}><div className="table-wrap"><table><thead><tr><th>Timestamp</th><th>Machine</th><th>Point</th><th>RPM</th><th>Load</th><th>Band A</th><th>Band B</th><th>Temperature</th><th>Sensor</th></tr></thead><tbody>{display.map((row) => <tr key={row.id}><td>{formatTime(row.timestamp)}</td><td>{row.machineId}</td><td><span className="point-tag">{row.point}</span></td><td>{row.rpm}</td><td>{row.load}%</td><td>{row.bandA} mm/s</td><td>{row.bandB} mm/s</td><td>{row.temperature} °C</td><td><span className={row.sensorStatus === "Online" ? "online" : ""}>● {row.sensorStatus}</span></td></tr>)}</tbody></table></div><div className="pagination"><span>Page {page}</span><button disabled={page === 1} onClick={() => setPage((current) => current - 1)}>Previous</button><button disabled={page * 8 >= measurements.length} onClick={() => setPage((current) => current + 1)}>Next</button></div></Card><Card title="Latest feature row" subtitle="F01–F14 in the units used by the presentation" className="sensor-chart-grid"><FeatureValues features={measurementFeatures(measurements.at(-1)!)} /></Card></>
+}
+
+function DatasetSlideExample() {
+  return <Card title="Dataset example from the slides" subtitle="AC-01 · P1 (DE) · radial H · slides 15–16" className="dataset-example">
+    <div className="table-wrap"><table>
+      <thead><tr><th>Window</th><th>Time</th><th>F01 · mm/s</th><th>F02 · mm/s</th><th>F03 · m/s²</th><th>F11 · A</th><th>F14 · °C</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">W01</th><td>10:00:00–10:00:10</td><td>2.00</td><td>1.25</td><td>1.50</td><td>—</td><td>—</td></tr>
+        <tr><th scope="row">W02</th><td>10:00:10–10:00:20</td><td>3.90</td><td>1.80</td><td>1.80</td><td>62</td><td>57.5</td></tr>
+      </tbody>
+    </table></div>
+    <p className="disclaimer">W02 current and temperature follow the worked example on slide 15. Slide 16 shows conflicting F14 entries. This comparison displays the known values as examples and leaves the unverified W01 values blank.</p>
+  </Card>
 }
 
 function Alerts({ alerts, setAlerts }: { alerts: AppAlert[]; setAlerts: (alerts: AppAlert[]) => void }) {

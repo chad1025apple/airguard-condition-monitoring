@@ -20,6 +20,10 @@ export interface Measurement {
   machineId: string
   point: 'P1' | 'P2'
   direction?: string
+  windowId?: string
+  windowEnd?: string
+  sampleRateHz?: number
+  operatingState?: string
   simulated?: boolean
   vdiExample?: boolean
   rpm: number
@@ -83,11 +87,20 @@ export interface Settings {
   refreshInterval: number
 }
 
+export const presentationSpecs = {
+  machineId: 'AC-01',
+  machineName: 'Screw Airend',
+  ratedPower: 55,
+  ratedRpm: 3000,
+  operatingPressure: 10,
+  freeAirDelivery: 9.3,
+}
+
 export const defaultSettings: Settings = {
-  machineId: 'AC-TSA-01',
-  machineName: 'Main Process Air Compressor',
-  ratedPower: 90,
-  ratedRpm: 2960,
+  machineId: presentationSpecs.machineId,
+  machineName: presentationSpecs.machineName,
+  ratedPower: presentationSpecs.ratedPower,
+  ratedRpm: presentationSpecs.ratedRpm,
   vdiMount: 'rigid',
   baselineP1BandA: 2.0,
   baselineP1BandB: 1.5,
@@ -113,10 +126,18 @@ export const featureHeaders = [
   'F14_Housing_Temperature',
 ]
 
-export const csvHeaders = [
+export const legacyMetadataHeaders = [
   'Machine_ID', 'Timestamp', 'Measurement_Point', 'Direction', 'RPM', 'Load_Percent',
-  'Discharge_Pressure', 'Sensor_Status', ...featureHeaders,
+  'Discharge_Pressure', 'Sensor_Status',
 ]
+export const windowMetadataHeaders = [
+  'Window_ID', 'Window_End', 'Sample_Rate_Hz', 'Operating_State',
+]
+export const csvHeaders = [
+  ...legacyMetadataHeaders, ...windowMetadataHeaders, ...featureHeaders,
+]
+
+export const standardGravity = 9.80665
 
 export function avgCurrent(m: Measurement) {
   if (m.csvElectrical) return m.csvElectrical.averageCurrent
@@ -140,6 +161,26 @@ export function vuf(m: Measurement) {
   const beta = (ab ** 4 + bc ** 4 + ca ** 4) / (ab ** 2 + bc ** 2 + ca ** 2) ** 2
   const sequenceTerm = Math.sqrt(Math.max(0, Math.min(1, 3 - 6 * beta)))
   return 100 * Math.sqrt((1 - sequenceTerm) / (1 + sequenceTerm))
+}
+
+const featureDefinitions = [
+  ['Band A velocity RMS', 'mm/s'], ['Band B velocity RMS', 'mm/s'],
+  ['Acceleration RMS', 'm/s²'], ['Absolute acceleration peak', 'm/s²'],
+  ['Crest factor', ''], ['Pearson kurtosis', ''],
+  ['1× velocity RMS', 'mm/s'], ['2× velocity RMS', 'mm/s'],
+  ['Envelope RMS after mean removal', 'm/s²'], ['Envelope spectrum peak amplitude', 'm/s²'],
+  ['Average three-phase current RMS', 'A'], ['Current unbalance index', '%'],
+  ['Voltage unbalance factor (VUF)', '%'], ['Bearing housing temperature', '°C'],
+] as const
+
+export function measurementFeatures(m: Measurement) {
+  const values = [
+    m.bandA, m.bandB, m.acceleration, m.accelerationPeak, m.crestFactor, m.kurtosis,
+    m.oneX, m.twoX, m.envelopeRms, m.envelopePeak, avgCurrent(m), currentUnbalance(m), vuf(m), m.temperature,
+  ]
+  return featureDefinitions.map(([label, unit], index) => ({
+    code: featureHeaders[index].slice(0, 3), label, unit, value: values[index],
+  }))
 }
 
 // VDI 3836:2012, 4.1.2 Table 1, Group 3 row (no timing gears, P >= 55 kW).

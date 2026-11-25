@@ -104,8 +104,8 @@ export function PdmTrend({ data, latest, settings }: PdmTrendProps) {
       </label>
       <label>Point
         <select value={point} onChange={(event) => setSelectedPoint(event.target.value as Measurement['point'])}>
-          <option value="P1">P1 · Drive side</option>
-          <option value="P2">P2 · Opposite side</option>
+          <option value="P1">P1 · DE (drive end)</option>
+          <option value="P2">P2 · NDE (non-drive end)</option>
         </select>
       </label>
     </div>

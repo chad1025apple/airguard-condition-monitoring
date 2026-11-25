@@ -10,7 +10,24 @@ Condition monitoring and predictive maintenance prototype for the **airend of an
 - Overview PdM trends for Band A/B vibration and bearing housing temperature, with short-term time-to-threshold estimates
 - Isolation Forest **demo-mode** anomaly score visualisation
 - Engineering evidence and suggested inspections for fault diagnosis
-- Demo data simulation, alert workflow, local settings persistence and CSV validation
+- Repeatable Normal, Warning and Critical examples, alert history, local settings and CSV validation
+
+## Presentation alignment · compressor slides 1–25
+
+The application uses the machine from slides 5 and 16: **AC-01**, oil-injected twin-screw compressor airend, **55 kW** motor, **3,000 rpm** nominal, **10 bar(g)** operating pressure, and **9.3 m³/min** FAD. The old dashboard images on slides 19–21 show a 90 kW machine. The updated demo uses slide 5 for the machine specification and uses the screenshot vibration, temperature and score as illustrative case readings.
+
+| Slides | Where to see the content |
+| --- | --- |
+| 1–11 | Overview identifies the airend case. Vibration shows P1 (DE) and P2 (NDE). Electrical covers P3 at the motor terminal box. F14 measures housing temperature near the bearing. |
+| 12–13 | Vibration includes illustrative time waveform, FFT and envelope plots. Dataset and AI show the F01–F14 values with their original feature units. |
+| 14–17 | AI shows the worked three-tree example and training/validation plan. Dataset shows the visible W01 and W02 features and a downloadable example of the two-part CSV schema. |
+| 18 | Fault Diagnosis Support shows evidence, candidate signatures and human verification. |
+| 19–21 | Select **Normal**, **Warning** or **Critical** in Overview. These give demo scores **0.19**, **0.82** and **0.77** at the default demo cut-off of **0.62**. Composite status also uses vibration and temperature. |
+| 22–25 | Overview shows VDI/PdM and demo Isolation Forest separately. Fault Diagnosis Support covers verification, maintenance and a post-maintenance baseline comparison. References are listed below. |
+
+The W02 worked example uses **F01 3.90 mm/s, F11 62 A, and F14 57.5 °C**. The F14 cells on slide 16 conflict with the stated temperature unit and worked example. The application leaves W01 temperature blank in that comparison and uses slide 15 for W02. The downloadable CSV contains a distinct simulated sample row with all 14 features.
+
+The presentation CSV has **12 metadata columns and 14 feature columns**. The window ID, end time, sample rate and operating state complete the older eight metadata fields. Raw signal sample rate can be left blank when unavailable. F03, F04, F09 and F10 are in **m/s²**. Imports of the older eight-metadata format treat those four columns as **g** and convert them. Window metadata stays outside the 14-element feature vector.
 
 ## Important limitations
 
@@ -20,7 +37,7 @@ The PdM projection estimates when a recent upward trend may reach the demo ALARM
 
 ## VDI 3836 example
 
-The demo represents a 90 kW, Group 3 screw airend without timing gears, with radial housing readings during assumed steady operation. System Settings can switch the example between rigid and resilient mounting. The two zone boundaries for each band come from **VDI 3836:2012 §4.1.2, Table 1**. For rigid mounting they are **8 / 12 mm/s RMS** for Band A and **3 / 4.5 mm/s RMS** for Band B.
+The 55 kW demo assumes a Group 3 screw airend without timing gears and radial housing readings during steady operation. System Settings can switch the example between rigid and resilient mounting. The two zone boundaries for each band come from **VDI 3836:2012 §4.1.2, Table 1**. For rigid mounting they are **8 / 12 mm/s RMS** for Band A and **3 / 4.5 mm/s RMS** for Band B.
 
 The operating **ALARM** follows §5.1. The prototype adds 25% of the Zone I upper boundary to the baseline for the selected point and band, subject to the 125% cap. Demo baselines must be positive and below the Zone I upper boundary. At P2 with rigid mounting, the default demo baselines of 2.1 and 1.6 mm/s give ALARMs of **4.10 mm/s (Band A)** and **2.35 mm/s (Band B)**. The prototype assigns critical review when a reading reaches the Zone II/III boundary. A machine-specific switch-off setting under §5.2 is unconfigured.
 
@@ -39,6 +56,8 @@ CSV readings are displayed without applying the built-in example limits. Real as
 | ISO 13379:2003, supplied under a file name containing “13379 1” | Diagnostic interpretation and evidence. The current successor is [ISO 13379-1:2025](https://www.iso.org/standard/88027.html). |
 | [ISO 1217:2009](https://www.iso.org/standard/44769.html), checked against the supplied Thai explainer | Acceptance and performance testing of displacement compressors. |
 | ISO 20816-3:2022, superseded by [ISO 20816-3:2026](https://www.iso.org/standard/89922.html) | Broad-band vibration reference for covered industrial machinery, including rotary compressors. The demo’s two-band comparison uses VDI 3836. |
+
+The scope note on slide 9 needs an edition check. ISO 20816-3:2022 and :2026 list rotary compressors. VDI 3836 provides the screw-airend criteria for this case’s Band A/B comparison.
 
 ## Run locally
 
