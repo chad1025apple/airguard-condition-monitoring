@@ -38,7 +38,13 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: ./dist
+      # The artifact listing can lag briefly behind a successful upload.
+      - name: Allow Pages artifact to become visible
+        run: sleep 12
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
