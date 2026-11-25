@@ -37,6 +37,8 @@ In Overview, select **Show degradation demo** to see measured history, threshold
 
 **Suggested inspection** subtracts the selected lead time (8, 24, or 48 hours) from the earliest estimated Warning. Once Warning is reached or falls within that lead time, the prototype suggests review now. The timing supports an inspection decision. Failure prediction, scheduling and work orders require separate validation and approval.
 
+In Overview, select **Electrical unbalance · P3** to see a warning from the motor terminal box readings. The demo reaches approximately **3.00% VUF** and **8.06% current unbalance** against project settings of **2%** and **5%**. Electrical Monitoring shows the phase readings and both trends. Fault Diagnosis Support shows the two triggers and suggests comparing readings at P3 and upstream.
+
 ## VDI 3836 example
 
 The 55 kW demo assumes a Group 3 screw airend without timing gears and radial housing readings during steady operation. System Settings can switch the example between rigid and resilient mounting. The two zone boundaries for each band come from **VDI 3836:2012 §4.1.2, Table 1**. For rigid mounting they are **8 / 12 mm/s RMS** for Band A and **3 / 4.5 mm/s RMS** for Band B.

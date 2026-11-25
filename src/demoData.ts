@@ -3,6 +3,7 @@ import { type AppAlert, type Measurement, type Settings, assessMeasurement, avgC
 const round = (value: number, digits = 2) => Number(value.toFixed(digits))
 
 export type PresentationScenario = 'normal' | 'warning' | 'critical'
+export type DemoScenario = PresentationScenario | 'electrical'
 
 const snapshots = {
   // Final comparison values shown on slides 19–21. Acceleration in the screenshots was in g.
@@ -11,9 +12,9 @@ const snapshots = {
   critical: { bandA: 11.19, bandB: 8.75, accelerationG: 4.42, envelopeG: 2.36, temperature: 127.63, score: 0.77, rpm: 2895, load: 75.8 },
 }
 
-export function makeDemoData(machineId: string, scenario: PresentationScenario = 'normal'): Measurement[] {
+export function makeDemoData(machineId: string, scenario: DemoScenario = 'normal'): Measurement[] {
   const now = Date.now()
-  const final = snapshots[scenario]
+  const final = snapshots[scenario === 'electrical' ? 'normal' : scenario]
   const points: Measurement[] = []
 
   for (let index = 0; index < 144; index += 1) {
@@ -26,6 +27,8 @@ export function makeDemoData(machineId: string, scenario: PresentationScenario =
     const approach = (baseline: number, target: number) => round(baseline + progress * (target - baseline))
     const imbalance = 0.7 + Math.abs(Math.sin(phase / 3)) * 0.4
     const voltageBase = 399.5 + Math.sin(phase) * 1.4
+    const electricalProgress = scenario === 'electrical' ? Math.max(0, (index - 133) / 10) : 0
+    const electricalReading = (baseline: number, target: number) => round(baseline + electricalProgress * (target - baseline))
     // The case-study current reference is 62 A (slide 15).
     const currentBase = isLatest ? 62 : 62 + wave * 3
     const acceleration = approach(0.73 + Math.abs(wave) * 0.25, final.accelerationG)
@@ -46,12 +49,13 @@ export function makeDemoData(machineId: string, scenario: PresentationScenario =
       rpm: isLatest ? final.rpm : round(2922 + Math.sin(phase / 1.8) * 22, 0),
       load: isLatest ? final.load : round(73 + Math.sin(phase / 2) * 5 + wave * 4, 1),
       pressure: isLatest ? presentationSpecs.operatingPressure : round(9.9 + Math.sin(phase / 4) * 0.10),
-      voltageA: round(voltageBase + imbalance * 0.45),
-      voltageB: round(voltageBase - imbalance * 0.8),
-      voltageC: round(voltageBase + imbalance * 0.25),
-      currentA: round(currentBase + imbalance * 0.44),
-      currentB: round(currentBase - imbalance * 0.62),
-      currentC: round(currentBase + imbalance * 0.18),
+      // P3 line-to-line targets represent approximately 400 V positive sequence and 12 V negative sequence.
+      voltageA: electricalReading(voltageBase + imbalance * 0.45, 412),
+      voltageB: electricalReading(voltageBase - imbalance * 0.8, 394.14),
+      voltageC: electricalReading(voltageBase + imbalance * 0.25, 394.14),
+      currentA: electricalReading(currentBase + imbalance * 0.44, 67),
+      currentB: electricalReading(currentBase - imbalance * 0.62, 59),
+      currentC: electricalReading(currentBase + imbalance * 0.18, 60),
       bandA: approach(2.05 + wave + (isP2 ? 0.15 : 0), final.bandA),
       bandB: approach(1.48 + wave * 0.6 + (isP2 ? 0.11 : 0), final.bandB),
       acceleration: round(acceleration * standardGravity),

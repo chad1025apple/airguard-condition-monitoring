@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import {
   Area, AreaChart, CartesianGrid, Cell, ComposedChart, Bar, BarChart, Legend, Line, LineChart,
-  Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis,
+  Pie, PieChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import {
   type AlertStatus, type AppAlert, type Measurement, type Settings, type Severity, type Status, type View,
@@ -15,7 +15,7 @@ import {
   legacyMetadataHeaders, measurementFeatures, presentationSpecs, standardGravity, windowMetadataHeaders,
   vdiDemoLimits, vibrationBaseline, vuf, type VibrationBand, type VdiMount,
 } from './domain'
-import { exportRow, makeDemoData, recentAlerts, simulateMeasurement, type PresentationScenario } from './demoData'
+import { exportRow, makeDemoData, recentAlerts, simulateMeasurement, type DemoScenario, type PresentationScenario } from './demoData'
 import { PdmTrend } from './PdmTrend'
 
 const navItems: { id: View; label: string; icon: typeof Gauge }[] = [
@@ -104,7 +104,7 @@ function App() {
   const [navOpen, setNavOpen] = useState(false)
   const [range, setRange] = useState('24H')
   const [notice, setNotice] = useState('')
-  const [activeCase, setActiveCase] = useState<PresentationScenario | null>('normal')
+  const [activeCase, setActiveCase] = useState<DemoScenario | null>('normal')
 
   const latest = measurements.at(-1)!
   const assessment = assessMeasurement(latest, settings)
@@ -121,13 +121,13 @@ function App() {
     setNotice(message)
     window.setTimeout(() => setNotice(''), 3500)
   }
-  const loadDemo = (scenario: PresentationScenario = 'normal') => {
+  const loadDemo = (scenario: DemoScenario = 'normal') => {
     const data = makeDemoData(settings.machineId, scenario)
     setMeasurements(data)
     setAlerts(recentAlerts(data, settings))
     setActiveCase(scenario)
     const example = presentationCases.find(({ id }) => id === scenario)
-    showNotice(`Slide ${example?.slide} · ${example?.label} demo loaded.`)
+    showNotice(example ? `Slide ${example.slide} · ${example.label} demo loaded.` : 'P3 electrical unbalance demo loaded.')
   }
   const simulate = (anomaly = false) => {
     if (!latest.vdiExample) return
@@ -157,7 +157,7 @@ function App() {
         {notice && <div className="toast"><Check size={17} />{notice}</div>}
         {view === 'overview' && <Overview {...sharedProps} assessment={assessment} activeCase={activeCase} onLoadCase={loadDemo} onSimulate={simulate} />}
         {view === 'vibration' && <Vibration {...sharedProps} />}
-        {view === 'electrical' && <Electrical {...sharedProps} />}
+        {view === 'electrical' && <Electrical {...sharedProps} assessment={assessment} onLoadDemo={() => loadDemo('electrical')} />}
         {view === 'temperature' && <Temperature {...sharedProps} />}
         {view === 'diagnosis' && <Diagnosis {...sharedProps} />}
         {view === 'ai' && <AiDetection {...sharedProps} />}
@@ -170,7 +170,7 @@ function App() {
   </div>
 }
 
-function Overview({ data, latest, settings, range, setRange, goTo, assessment, activeCase, onLoadCase, onSimulate }: { data: Measurement[]; latest: Measurement; settings: Settings; range: string; setRange: (r: string) => void; goTo: (view: View) => void; assessment: ReturnType<typeof assessMeasurement>; activeCase: PresentationScenario | null; onLoadCase: (scenario: PresentationScenario) => void; onSimulate: (anomaly?: boolean) => void }) {
+function Overview({ data, latest, settings, range, setRange, goTo, assessment, activeCase, onLoadCase, onSimulate }: { data: Measurement[]; latest: Measurement; settings: Settings; range: string; setRange: (r: string) => void; goTo: (view: View) => void; assessment: ReturnType<typeof assessMeasurement>; activeCase: DemoScenario | null; onLoadCase: (scenario: DemoScenario) => void; onSimulate: (anomaly?: boolean) => void }) {
   const { status: currentStatus, findings } = assessment
   const voltageUnbalance = vuf(latest)
   const phaseCurrentUnbalance = currentUnbalance(latest)
@@ -180,9 +180,10 @@ function Overview({ data, latest, settings, range, setRange, goTo, assessment, a
   return <>
     <PageTitle eyebrow="LIVE ASSET OVERVIEW" title="Screw Airend condition at a glance"><div className="page-actions"><button className="outline-button" disabled={!latest.vdiExample} onClick={() => onSimulate()}><RefreshCw size={16} />Simulate measurement</button><button className="primary-button" disabled={!latest.vdiExample} onClick={() => onSimulate(true)}><AlertTriangle size={16} />Simulate anomaly</button></div></PageTitle>
     <div className="presentation-cases">
-      <div><strong>Presentation examples</strong><span>Slides 19–21 · fixed demo readings</span></div>
-      <div className="segment" role="group" aria-label="Presentation examples">
+      <div><strong>Demo scenarios</strong><span>Slides 19–21 and P3 electrical unbalance</span></div>
+      <div className="segment" role="group" aria-label="Demo scenarios">
         {presentationCases.map(({ id, label, slide }) => <button key={id} type="button" className={activeCase === id ? 'active' : ''} aria-pressed={activeCase === id} onClick={() => onLoadCase(id)}>{label} <small>· Slide {slide}</small></button>)}
+        <button type="button" className={activeCase === 'electrical' ? 'active' : ''} aria-pressed={activeCase === 'electrical'} onClick={() => onLoadCase('electrical')}>Electrical unbalance <small>· P3</small></button>
       </div>
     </div>
     <div className="asset-strip"><div className="asset-icon"><Cpu /></div><div className="asset-main"><span>Machine</span><strong>{latest.vdiExample ? settings.machineName : latest.machineId}</strong><small>{latest.vdiExample ? `${settings.machineId} · Oil-injected twin-screw demo` : 'Imported dataset'}</small></div><div><span>Motor rating</span><b>{latest.vdiExample ? `${settings.ratedPower} kW` : 'Unverified'}</b></div><div><span>Operating RPM</span><b>{latest.rpm.toLocaleString()} rpm</b>{latest.vdiExample && <small>Nominal {settings.ratedRpm.toLocaleString()} rpm</small>}</div><div><span>Load</span><b>{latest.load}%</b></div><div><span>Discharge pressure</span><b>{latest.pressure} bar(g)</b>{latest.vdiExample && <small>FAD {presentationSpecs.freeAirDelivery} m³/min</small>}</div><div className="asset-status"><span>Operating status</span><StatusBadge status={currentStatus} /></div></div>
@@ -207,7 +208,7 @@ function Overview({ data, latest, settings, range, setRange, goTo, assessment, a
     <div className="metric-grid four">
       <MetricCard label="Band A velocity RMS" value={latest.bandA} unit=" mm/s" detail={latest.vdiExample ? `${latest.point} · demo baseline ${vibrationBaseline(latest.point, 'bandA', settings)} mm/s` : latest.point} tone={findings.some(({ key }) => key === 'bandA') ? 'amber' : 'green'} icon={<Vibrate size={18} />} />
       <MetricCard label="Band B velocity RMS" value={latest.bandB} unit=" mm/s" detail={latest.vdiExample ? `${latest.point} · demo baseline ${vibrationBaseline(latest.point, 'bandB', settings)} mm/s` : latest.point} tone={findings.some(({ key }) => key === 'bandB') ? 'amber' : 'green'} icon={<Waves size={18} />} />
-      <MetricCard label="Average 3-phase current" value={avgCurrent(latest).toFixed(1)} unit=" A" detail={phaseCurrentUnbalance === null ? 'Unbalance unavailable' : `Unbalance ${phaseCurrentUnbalance.toFixed(2)}%`} tone="blue" icon={<Zap size={18} />} />
+      <MetricCard label="Average 3-phase current" value={avgCurrent(latest).toFixed(1)} unit=" A" detail={phaseCurrentUnbalance === null ? 'Unbalance unavailable' : `Unbalance ${phaseCurrentUnbalance.toFixed(2)}%`} tone={findings.some(({ key }) => key === 'currentUnbalance') ? 'amber' : 'blue'} icon={<Zap size={18} />} />
       <MetricCard label="Bearing housing temperature" value={latest.temperature} unit=" °C" detail={thermal ? `Demo warning at ${thermal.warning} °C` : 'Limits not configured'} tone={findings.some(({ key }) => key === 'temperature') ? 'amber' : 'green'} icon={<Thermometer size={18} />} />
       <MetricCard label="Acceleration RMS" value={latest.acceleration} unit=" m/s²" detail={`Crest factor ${latest.crestFactor}`} tone="blue" icon={<Activity size={18} />} />
       <MetricCard label="Voltage unbalance factor" value={voltageUnbalance?.toFixed(2) ?? 'Unavailable'} unit={voltageUnbalance === null ? undefined : ' %'} detail={latest.vdiExample ? `Project demo warning at ${settings.vufWarning}%` : 'Reported in CSV · method unverified'} tone={findings.some(({ key }) => key === 'vuf') ? 'amber' : 'green'} icon={<Zap size={18} />} />
@@ -294,19 +295,21 @@ function formatPercent(value: number | null) {
   return value === null ? 'Unavailable' : `${value.toFixed(2)}%`
 }
 
-function Electrical({ data, latest, settings, range, setRange }: { data: Measurement[]; latest: Measurement; settings: Settings; range: string; setRange: (r: string) => void }) {
+function Electrical({ data, latest, settings, range, setRange, assessment, onLoadDemo }: { data: Measurement[]; latest: Measurement; settings: Settings; range: string; setRange: (r: string) => void; assessment: ReturnType<typeof assessMeasurement>; onLoadDemo: () => void }) {
   const trend = data.filter((m) => m.machineId === latest.machineId).slice(-48)
     .map((m) => ({ time: formatTime(m.timestamp, true), vuf: vuf(m), currentUnbalance: currentUnbalance(m) }))
   const voltage = vuf(latest)
   const current = currentUnbalance(latest)
+  const voltageWarning = assessment.findings.some(({ key }) => key === 'vuf')
+  const currentWarning = assessment.findings.some(({ key }) => key === 'currentUnbalance')
   const phaseData = [
-    { phase: 'AB / A', Voltage: latest.voltageA, Current: latest.currentA },
-    { phase: 'BC / B', Voltage: latest.voltageB, Current: latest.currentB },
-    { phase: 'CA / C', Voltage: latest.voltageC, Current: latest.currentC },
+    { pair: 'AB', phase: 'A', Voltage: latest.voltageA, Current: latest.currentA },
+    { pair: 'BC', phase: 'B', Voltage: latest.voltageB, Current: latest.currentB },
+    { pair: 'CA', phase: 'C', Voltage: latest.voltageC, Current: latest.currentC },
   ]
 
   return <>
-    <PageTitle eyebrow="DRIVE MOTOR / ELECTRICAL" title="P3 · Motor terminal box"><RangeControl range={range} setRange={setRange} /></PageTitle>
+    <PageTitle eyebrow="DRIVE MOTOR / ELECTRICAL" title="P3 · Motor terminal box"><div className="page-actions"><button type="button" className="outline-button" onClick={onLoadDemo}><Zap size={16} />Load P3 electrical demo</button><RangeControl range={range} setRange={setRange} /></div></PageTitle>
     <div className="callout"><CircleHelp size={18} /><p>
       {latest.csvElectrical
         ? 'F11–F13 come from the imported CSV. Per-phase readings and the VUF calculation method are unavailable.'
@@ -314,23 +317,31 @@ function Electrical({ data, latest, settings, range, setRange }: { data: Measure
     </p></div>
     <div className="metric-grid three">
       <MetricCard label="Average 3-phase current" value={avgCurrent(latest).toFixed(1)} unit=" A" detail="RMS" tone="blue" />
-      <MetricCard label="Voltage unbalance factor" value={formatPercent(voltage)} detail={latest.vdiExample ? `Project demo review at ${settings.vufWarning}%` : 'CSV value · method unverified'} tone="blue" />
-      <MetricCard label="Current unbalance" value={formatPercent(current)} detail={latest.vdiExample ? `Project demo review at ${settings.currentUnbalanceWarning}%` : 'CSV value · method unverified'} tone="blue" />
+      <MetricCard label="Voltage unbalance factor" value={formatPercent(voltage)} detail={latest.vdiExample ? `${voltageWarning ? 'Warning · ' : ''}Demo limit ${settings.vufWarning}%` : 'CSV value · method unverified'} tone={voltageWarning ? 'amber' : 'blue'} />
+      <MetricCard label="Current unbalance" value={formatPercent(current)} detail={latest.vdiExample ? `${currentWarning ? 'Warning · ' : ''}Demo limit ${settings.currentUnbalanceWarning}%` : 'CSV value · method unverified'} tone={currentWarning ? 'amber' : 'blue'} />
     </div>
     <div className="chart-grid two sensor-chart-grid">
       {latest.vdiExample && <>
         <ChartPanel title="Line-to-line voltage" subtitle="AB / BC / CA · V RMS">
-          <ResponsiveContainer width="100%" height={250}><BarChart data={phaseData}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="phase" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="Voltage" fill="#55a9ff" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer>
+          <ResponsiveContainer width="100%" height={250}><BarChart data={phaseData}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="pair" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="Voltage" fill="#55a9ff" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer>
         </ChartPanel>
         <ChartPanel title="Phase current" subtitle="A / B / C · A RMS">
           <ResponsiveContainer width="100%" height={250}><BarChart data={phaseData}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="phase" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Bar dataKey="Current" fill="#27c9a2" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer>
         </ChartPanel>
       </>}
       <ChartPanel title="Voltage unbalance trend" subtitle={latest.csvElectrical ? 'VUF as reported in CSV' : 'Sequence voltage ratio (%)'}>
-        <ResponsiveContainer width="100%" height={250}><LineChart data={trend}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Line dataKey="vuf" name="VUF %" stroke="#ad8cff" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
+        <ResponsiveContainer width="100%" height={250}><LineChart data={trend}>
+          <CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} />
+          {latest.vdiExample && <ReferenceLine y={settings.vufWarning} stroke="#f4b352" strokeDasharray="5 4" ifOverflow="extendDomain" label={{ value: `Demo limit ${settings.vufWarning}%`, position: 'insideTopLeft', fill: '#f4b352', fontSize: 11 }} />}
+          <Line dataKey="vuf" name="VUF %" stroke="#ad8cff" strokeWidth={2} dot={false} />
+        </LineChart></ResponsiveContainer>
       </ChartPanel>
       <ChartPanel title="Current unbalance trend" subtitle={latest.csvElectrical ? 'Current unbalance as reported in CSV' : 'Maximum phase deviation / average current (%)'}>
-        <ResponsiveContainer width="100%" height={250}><LineChart data={trend}><CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} /><Line dataKey="currentUnbalance" name="Current unbalance %" stroke="#f4b352" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
+        <ResponsiveContainer width="100%" height={250}><LineChart data={trend}>
+          <CartesianGrid {...chartGrid} vertical={false} /><XAxis dataKey="time" {...axis} /><YAxis {...axis} /><Tooltip contentStyle={tooltipStyle} />
+          {latest.vdiExample && <ReferenceLine y={settings.currentUnbalanceWarning} stroke="#f4b352" strokeDasharray="5 4" ifOverflow="extendDomain" label={{ value: `Demo limit ${settings.currentUnbalanceWarning}%`, position: 'insideTopLeft', fill: '#f4b352', fontSize: 11 }} />}
+          <Line dataKey="currentUnbalance" name="Current unbalance %" stroke="#27c9a2" strokeWidth={2} dot={false} />
+        </LineChart></ResponsiveContainer>
       </ChartPanel>
     </div>
     <p className="disclaimer">IEC 60034-26 describes the effect of unbalanced supply voltage on the motor. IEC 60034-1 addresses motor rating and performance. The project demo limits are review settings for this interface.</p>
@@ -395,7 +406,7 @@ function Diagnosis({ data, latest, settings, range, setRange }: { data: Measurem
         <ul className="inspection-list">
           {hasVibration && <li>Repeat P1/P2 measurements at comparable speed and load, and check frequency components and sensor mounting.</li>}
           {hasHeat && <li>Check ambient temperature, cooling and lubrication against the equipment manual.</li>}
-          {hasElectrical && <li>Verify supply voltages and phase currents before inspecting the motor.</li>}
+          {hasElectrical && <li>Ask electrical maintenance to verify phase voltages and currents at P3, then compare the readings upstream to help locate the source of the imbalance.</li>}
           {engineering.length === 0 && <li>Continue trending and collect more evidence before assigning a fault cause.</li>}
           {engineering.length > 0 && <li>Record the engineering findings and confirm any fault with a targeted inspection.</li>}
         </ul>
