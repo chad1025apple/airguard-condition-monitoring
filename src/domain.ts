@@ -1,6 +1,8 @@
 export type Status = 'NORMAL' | 'WARNING' | 'HIGH ALERT' | 'CRITICAL' | 'OFFLINE' | 'NOT CONFIGURED'
 export type Severity = 'Info' | 'Warning' | 'High' | 'Critical'
 export type AlertStatus = 'New' | 'Acknowledged' | 'Under Inspection' | 'Resolved'
+export type VdiMount = 'rigid' | 'resilient'
+export type VibrationBand = 'bandA' | 'bandB'
 export type View =
   | 'overview'
   | 'vibration'
@@ -17,15 +19,19 @@ export interface Measurement {
   timestamp: string
   machineId: string
   point: 'P1' | 'P2'
+  direction?: string
+  simulated?: boolean
+  vdiExample?: boolean
   rpm: number
   load: number
   pressure: number
-  voltageA: number
-  voltageB: number
-  voltageC: number
-  currentA: number
-  currentB: number
-  currentC: number
+  voltageA?: number
+  voltageB?: number
+  voltageC?: number
+  currentA?: number
+  currentB?: number
+  currentC?: number
+  csvElectrical?: { averageCurrent: number; currentUnbalance: number; vuf: number }
   bandA: number
   bandB: number
   acceleration: number
@@ -61,10 +67,9 @@ export interface Settings {
   machineName: string
   ratedPower: number
   ratedRpm: number
-  bandAWarn: number
-  bandAHigh: number
-  bandBWarn: number
-  bandBHigh: number
+  vdiMount: VdiMount
+  baselineP1BandA: number
+  baselineP1BandB: number
   baselineBandA: number
   baselineBandB: number
   vufWarning: number
@@ -83,10 +88,9 @@ export const defaultSettings: Settings = {
   machineName: 'Main Process Air Compressor',
   ratedPower: 90,
   ratedRpm: 2960,
-  bandAWarn: 4.5,
-  bandAHigh: 7.1,
-  bandBWarn: 3.5,
-  bandBHigh: 5.6,
+  vdiMount: 'rigid',
+  baselineP1BandA: 2.0,
+  baselineP1BandB: 1.5,
   baselineBandA: 2.1,
   baselineBandB: 1.6,
   vufWarning: 2,
@@ -115,24 +119,96 @@ export const csvHeaders = [
 ]
 
 export function avgCurrent(m: Measurement) {
-  return (m.currentA + m.currentB + m.currentC) / 3
+  if (m.csvElectrical) return m.csvElectrical.averageCurrent
+  return ((m.currentA ?? 0) + (m.currentB ?? 0) + (m.currentC ?? 0)) / 3
 }
 
 export function currentUnbalance(m: Measurement) {
+  if (m.csvElectrical) return m.csvElectrical.currentUnbalance
   const average = avgCurrent(m)
+  if (!average || m.currentA === undefined || m.currentB === undefined || m.currentC === undefined) return null
   return Math.max(Math.abs(m.currentA - average), Math.abs(m.currentB - average), Math.abs(m.currentC - average)) / average * 100
 }
 
 export function vuf(m: Measurement) {
-  const average = (m.voltageA + m.voltageB + m.voltageC) / 3
-  return Math.max(Math.abs(m.voltageA - average), Math.abs(m.voltageB - average), Math.abs(m.voltageC - average)) / average * 100
+  if (m.csvElectrical) return m.csvElectrical.vuf
+  const [ab, bc, ca] = [m.voltageA ?? 0, m.voltageB ?? 0, m.voltageC ?? 0]
+  if (Math.min(ab, bc, ca) <= 0 || 2 * Math.max(ab, bc, ca) >= ab + bc + ca) return null
+
+  // Equivalent sequence ratio from the three fundamental line-to-line RMS magnitudes.
+  // The synthetic voltages have normal phase rotation.
+  const beta = (ab ** 4 + bc ** 4 + ca ** 4) / (ab ** 2 + bc ** 2 + ca ** 2) ** 2
+  const sequenceTerm = Math.sqrt(Math.max(0, Math.min(1, 3 - 6 * beta)))
+  return 100 * Math.sqrt((1 - sequenceTerm) / (1 + sequenceTerm))
+}
+
+// VDI 3836:2012, 4.1.2 Table 1, Group 3 row (no timing gears, P >= 55 kW).
+const group3Zones = {
+  rigid: { bandA: [8, 12], bandB: [3, 4.5] },
+  resilient: { bandA: [10, 15], bandB: [4.5, 7] },
+} as const
+
+export function vibrationBaseline(point: Measurement['point'], band: VibrationBand, settings: Settings) {
+  if (point === 'P1') return band === 'bandA' ? settings.baselineP1BandA : settings.baselineP1BandB
+  return band === 'bandA' ? settings.baselineBandA : settings.baselineBandB
+}
+
+export function vdiDemoLimits(m: Measurement | undefined, band: VibrationBand, settings: Settings) {
+  if (!m?.vdiExample || m.machineId !== settings.machineId || !(settings.ratedPower >= 55)) return null
+  const mount = settings.vdiMount === 'resilient' ? 'resilient' : 'rigid'
+  const [zone1, zone2] = group3Zones[mount][band]
+  const baseline = vibrationBaseline(m.point, band, settings)
+  // VDI 3836 5.1: baseline plus 25% of the Zone I upper boundary, capped at 125%.
+  const alarm = baseline > 0 && baseline < zone1 ? Math.min(baseline + 0.25 * zone1, 1.25 * zone1) : null
+  return { mount, zone1, zone2, baseline, alarm }
+}
+
+export function demoThermalLimits(m: Measurement | undefined, settings: Settings) {
+  const { temperatureWarning: warning, temperatureCritical: critical } = settings
+  return m?.vdiExample && Number.isFinite(warning) && Number.isFinite(critical) && warning > 0 && critical > warning
+    ? { warning, critical }
+    : null
+}
+
+export interface AlarmFinding {
+  key: 'bandA' | 'bandB' | 'temperature' | 'vuf' | 'currentUnbalance' | 'anomaly'
+  label: string
+  value: number
+  unit: string
+  limit: number
+  level: 'WARNING' | 'CRITICAL'
+}
+
+function thresholdFinding(key: AlarmFinding['key'], label: string, value: number | null, unit: string, warning: number | null, critical?: number): AlarmFinding | null {
+  if (value === null) return null
+  if (critical !== undefined && value >= critical) return { key, label, value, unit, limit: critical, level: 'CRITICAL' }
+  if (warning !== null && value >= warning) return { key, label, value, unit, limit: warning, level: 'WARNING' }
+  return null
+}
+
+export function assessMeasurement(m: Measurement, s: Settings): { status: Status; findings: AlarmFinding[] } {
+  if (m.sensorStatus === 'Offline') return { status: 'OFFLINE', findings: [] }
+  if (!m.vdiExample) return { status: 'NOT CONFIGURED', findings: [] }
+
+  const bandA = vdiDemoLimits(m, 'bandA', s)
+  const bandB = vdiDemoLimits(m, 'bandB', s)
+  const thermal = demoThermalLimits(m, s)
+  // Zone III maps to the prototype's highest review priority. No trip is configured.
+  const findings = [
+    thresholdFinding('temperature', 'Bearing housing temperature', m.temperature, ' °C', thermal?.warning ?? null, thermal?.critical),
+    thresholdFinding('bandA', 'Band A vibration', m.bandA, ' mm/s', bandA?.alarm ?? null, bandA?.zone2),
+    thresholdFinding('bandB', 'Band B vibration', m.bandB, ' mm/s', bandB?.alarm ?? null, bandB?.zone2),
+    thresholdFinding('vuf', 'Voltage unbalance', vuf(m), '%', s.vufWarning),
+    thresholdFinding('currentUnbalance', 'Current unbalance', currentUnbalance(m), '%', s.currentUnbalanceWarning),
+    thresholdFinding('anomaly', 'Demo anomaly score', m.anomalyScore, '', s.anomalyThreshold),
+  ].filter((finding) => finding !== null)
+
+  if (findings.some(({ level }) => level === 'CRITICAL')) return { status: 'CRITICAL', findings }
+  return { status: findings.length ? 'WARNING' : bandA?.alarm != null && bandB?.alarm != null && thermal ? 'NORMAL' : 'NOT CONFIGURED', findings }
 }
 
 export function statusFor(m: Measurement, s: Settings): Status {
-  if (m.sensorStatus === 'Offline') return 'OFFLINE'
-  if (m.temperature >= s.temperatureCritical || m.bandA >= s.bandAHigh || m.bandB >= s.bandBHigh) return 'CRITICAL'
-  if (m.temperature >= s.temperatureWarning || m.bandA >= s.bandAWarn || m.bandB >= s.bandBWarn || vuf(m) >= s.vufWarning || currentUnbalance(m) >= s.currentUnbalanceWarning || m.anomalyScore >= s.anomalyThreshold) return 'WARNING'
-  return 'NORMAL'
+  return assessMeasurement(m, s).status
 }
 
 export function severityFor(m: Measurement, s: Settings): Severity {

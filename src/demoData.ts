@@ -1,4 +1,4 @@
-import { type AppAlert, type Measurement, type Settings, avgCurrent, currentUnbalance, vuf } from './domain'
+import { type AppAlert, type Measurement, type Settings, assessMeasurement, avgCurrent, currentUnbalance, vuf } from './domain'
 
 const round = (value: number, digits = 2) => Number(value.toFixed(digits))
 
@@ -29,6 +29,9 @@ export function makeDemoData(machineId: string, scenario: 'normal' | 'warning' |
       timestamp: new Date(now - (143 - index) * 10 * 60_000).toISOString(),
       machineId,
       point: isP2 ? 'P2' : 'P1',
+      direction: 'Radial',
+      simulated: true,
+      vdiExample: true,
       rpm: round(rpm, 0),
       load: round(load, 1),
       pressure: round(7.05 + Math.sin(phase / 4) * 0.13, 2),
@@ -58,22 +61,24 @@ export function makeDemoData(machineId: string, scenario: 'normal' | 'warning' |
 }
 
 export function recentAlerts(data: Measurement[], settings: Settings): AppAlert[] {
-  const alertable = data.filter((m) => m.anomaly || m.temperature >= settings.temperatureWarning || m.bandA >= settings.bandAWarn || m.bandB >= settings.bandBWarn || vuf(m) >= settings.vufWarning || currentUnbalance(m) >= settings.currentUnbalanceWarning).slice(-8).reverse()
-  return alertable.map((m, index) => {
-    const parameter = m.anomaly ? 'Isolation Forest anomaly score' : m.temperature >= settings.temperatureWarning ? 'Bearing housing temperature' : m.bandB >= settings.bandBWarn ? 'Band B velocity RMS' : m.bandA >= settings.bandAWarn ? 'Band A velocity RMS' : vuf(m) >= settings.vufWarning ? 'Voltage unbalance factor' : 'Current unbalance index'
-    const measured = parameter.includes('temperature') ? `${m.temperature} °C` : parameter.includes('anomaly') ? m.anomalyScore.toFixed(2) : parameter.includes('Voltage') ? `${vuf(m).toFixed(2)} %` : parameter.includes('Current') ? `${currentUnbalance(m).toFixed(2)} %` : parameter.includes('Band B') ? `${m.bandB} mm/s` : `${m.bandA} mm/s`
-    const threshold = parameter.includes('temperature') ? `${settings.temperatureWarning} °C` : parameter.includes('anomaly') ? settings.anomalyThreshold.toFixed(2) : parameter.includes('Voltage') ? `${settings.vufWarning} %` : parameter.includes('Current') ? `${settings.currentUnbalanceWarning} %` : parameter.includes('Band B') ? `${settings.bandBWarn} mm/s` : `${settings.bandAWarn} mm/s`
+  const alertable = data.flatMap((measurement) => {
+    const { findings } = assessMeasurement(measurement, settings)
+    const finding = findings.find(({ level }) => level === 'CRITICAL') ?? findings[0]
+    return finding ? [{ measurement, finding }] : []
+  }).slice(-8).reverse()
+  return alertable.map(({ measurement, finding }) => {
+    const { label, value, unit, limit, level, key } = finding
     return {
-      id: `ALT-${String(data.length - index).padStart(5, '0')}`,
-      timestamp: m.timestamp,
-      machineId: m.machineId,
-      parameter,
-      measured,
-      threshold,
-      severity: m.temperature >= settings.temperatureCritical || m.bandA >= settings.bandAHigh || m.bandB >= settings.bandBHigh ? 'Critical' : 'Warning',
-      source: m.anomaly ? 'AI anomaly detection' : 'Engineering rule',
-      description: `${parameter} requires engineer review.`,
-      status: index === 0 ? 'New' : index < 3 ? 'Under Inspection' : 'Acknowledged',
+      id: `ALT-${measurement.id}-${measurement.timestamp}`,
+      timestamp: measurement.timestamp,
+      machineId: measurement.machineId,
+      parameter: label,
+      measured: `${round(value)}${unit}`,
+      threshold: `${limit}${unit}`,
+      severity: level === 'CRITICAL' ? 'Critical' : 'Warning',
+      source: key === 'anomaly' ? 'AI anomaly detection' : 'Engineering rule',
+      description: `${label} requires engineer review.`,
+      status: 'New',
       note: '',
     }
   })
@@ -87,6 +92,7 @@ export function simulateMeasurement(previous: Measurement, settings: Settings, a
     ...previous,
     id: `${previous.machineId}-${Date.now()}`,
     timestamp: new Date().toISOString(),
+    simulated: true,
     rpm: round(previous.rpm + variation() * 18, 0),
     load: round(previous.load + variation() * 4, 1),
     pressure: round(previous.pressure + variation() * 0.16),
@@ -104,8 +110,8 @@ export function simulateMeasurement(previous: Measurement, settings: Settings, a
 
 export function exportRow(m: Measurement) {
   return [
-    m.machineId, m.timestamp, m.point, 'Radial', m.rpm, m.load, m.pressure, m.sensorStatus,
+    m.machineId, m.timestamp, m.point, m.direction ?? 'Radial', m.rpm, m.load, m.pressure, m.sensorStatus,
     m.bandA, m.bandB, m.acceleration, m.accelerationPeak, m.crestFactor, m.kurtosis, m.oneX, m.twoX,
-    m.envelopeRms, m.envelopePeak, avgCurrent(m).toFixed(2), currentUnbalance(m).toFixed(2), vuf(m).toFixed(2), m.temperature,
+    m.envelopeRms, m.envelopePeak, avgCurrent(m).toFixed(2), currentUnbalance(m)?.toFixed(2) ?? '', vuf(m)?.toFixed(2) ?? '', m.temperature,
   ]
 }
