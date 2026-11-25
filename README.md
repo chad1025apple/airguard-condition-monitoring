@@ -33,7 +33,9 @@ The presentation CSV has **12 metadata columns and 14 feature columns**. The win
 
 The built-in example uses simulated measurements and mock Isolation Forest scores. Real sensor integration, validated fault diagnosis, remaining life estimation and switch-off protection are outside the prototype scope.
 
-The PdM projection estimates when a recent upward trend may reach the demo ALARM or the Zone II/III review boundary. It uses comparable readings from one measurement point and direction, up to the observed fit duration (maximum seven days). Use **Show degradation demo** in Overview to see an example.
+In Overview, select **Show degradation demo** to see measured history, threshold lines, and a projected crossing. The projection fits a line to recent comparable readings from one measurement point and direction. Its horizon is limited to the observed fit duration (maximum seven days). The shaded planning range shows how the forecast changes with variation in the recent fit. It has no calibrated probability.
+
+**Suggested inspection** subtracts the selected lead time (8, 24, or 48 hours) from the earliest estimated Warning. Once Warning is reached or falls within that lead time, the prototype suggests review now. The timing supports an inspection decision. Failure prediction, scheduling and work orders require separate validation and approval.
 
 ## VDI 3836 example
 

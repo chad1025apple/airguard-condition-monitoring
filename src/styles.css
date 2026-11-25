@@ -31,16 +31,27 @@
 .pdm-readouts span { color: #b0c2d6; font-size: 13px; }
 .pdm-readouts strong { margin-top: 4px; font-size: 16px; color: #ebf4ff; }
 .pdm-readouts small { margin-top: 2px; color: #a3b6cb; font-size: 12px; }
+.pdm-plan { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 20px; margin: 12px 0; padding: 12px 14px; border: 1px solid #37506b; border-radius: 8px; background: #102238; }
+.pdm-plan > div { min-width: min(230px, 100%); }
+.pdm-plan span, .pdm-plan strong { display: block; }
+.pdm-plan span { color: #acc1d7; font-size: 13px; }
+.pdm-plan strong { margin-top: 4px; color: #edf6ff; font-size: 17px; }
+.pdm-plan p { flex: 1 1 250px; margin: 0; color: #b8cbde; font-size: 13px; line-height: 1.45; }
+.pdm-plan[data-state="planned"] { border-color: #286257; background: #102c36; }
+.pdm-plan[data-state="planned"] strong { color: #80e2be; }
+.pdm-plan[data-state="soon"], .pdm-plan[data-state="warning"] { border-color: #765236; background: #292437; }
+.pdm-plan[data-state="urgent"] { border-color: #875361; background: #2e2231; }
 .pdm-chart { min-width: 0; }
 .pdm-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 4px 0 0; color: #b6c8da; font-size: 12px; }
 .pdm-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .pdm-legend span::before { content: ""; width: 17px; border-top: 2px dashed var(--pdm-color); }
 .pdm-legend .pdm-reading::before { border-top-style: solid; }
-.pdm-reading { --pdm-color: #36d4b0; }
-.pdm-projection { --pdm-color: #c2a6ff; }
-.pdm-zone { --pdm-color: #72b3ef; }
-.pdm-warning { --pdm-color: #f5bc62; }
-.pdm-critical { --pdm-color: #ff8088; }
+.pdm-reading { --pdm-color: #60b8fa; }
+.pdm-projection { --pdm-color: #c6afff; }
+.pdm-warning { --pdm-color: #ffc271; }
+.pdm-critical { --pdm-color: #ff8590; }
+.pdm-inspect { --pdm-color: #61d4ae; }
+.pdm-legend .pdm-range::before { height: 8px; border: 1px solid #a88fd2; border-radius: 2px; background: rgba(198, 175, 255, .22); }
 .pdm-foot, .pdm-empty { color: #9eb3ca; font-size: 12px; line-height: 1.5; }
 .pdm-foot { border-top: 1px solid #2b405a; margin-top: 13px; padding-top: 8px; }
 .pdm-foot p { margin: 3px 0; }
